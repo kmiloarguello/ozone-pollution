@@ -184,10 +184,14 @@ def plot_sequence_images(degree = .25, size = .125, vmin = 7, vmax = 30):
             # Defining invalid data
             mask = mask2 & maskgrid
 
+            #print("the col", col[mask])
+
             # Add a media filter for the grill regulier
             if len(col[mask]) != 0:
-              colgrid[ilat,ilon] = np.mean(col[mask])
-
+              median = np.mean(col[mask])
+              if (median >= vmin):
+                colgrid[ilat,ilon] = median
+              
         # We mark the values at colgrid as invalid because they are maybe false positives or bad sampling
         colgrid = ma.masked_values(colgrid,0.)
         
@@ -200,11 +204,11 @@ def plot_sequence_images(degree = .25, size = .125, vmin = 7, vmax = 30):
         p1=plt.subplot(1,1,1)
         
         #### to have coastline and countries in the background of the image
-        m=Basemap(llcrnrlon=100.,llcrnrlat=20.,urcrnrlon=150.,urcrnrlat=48.,resolution='i')
-        m.drawcoastlines()
-        m.drawmapboundary()
-        m.drawmeridians(np.r_[100:151:10], labels=[0,0,0,1], color='grey',fontsize=8,linewidth=0)
-        m.drawparallels(np.r_[20:48:5], labels=[1,0,0,0], color='grey',fontsize=8,linewidth=0)
+        #m=Basemap(llcrnrlon=100.,llcrnrlat=20.,urcrnrlon=150.,urcrnrlat=48.,resolution='i')
+        #m.drawcoastlines()
+        #m.drawmapboundary()
+        #m.drawmeridians(np.r_[100:151:10], labels=[0,0,0,1], color='grey',fontsize=8,linewidth=0)
+        #m.drawparallels(np.r_[20:48:5], labels=[1,0,0,0], color='grey',fontsize=8,linewidth=0)
 
         cs=plt.pcolor(long1,latg,colgrid,vmin=vmin,vmax=vmax, cmap="jet")#,cmap=plt.cm.Greys) #check whether it is at the center
         c=plt.colorbar(cs)#,location='bottom',pad="10%")
@@ -212,11 +216,47 @@ def plot_sequence_images(degree = .25, size = .125, vmin = 7, vmax = 30):
         c.ax.tick_params(labelsize=8)
         sbpt="IASI LT ozone column "+str(year)+"%02d"%month+"%02d"%dd
         plt.title(sbpt,fontsize=10)
-        figname="Daily_IASI_gridded_raw."+str(year)+"%02d"%month+"%02d"%dd+".png"
-        plt.plot(figname)
+        figname=str(year)+"%02d"%month+"%02d"%dd+"_deg-"+str(degree)+"_size-"+str(size)+"_vmin-"+str(vmin)+"_vmax-"+str(vmax)+".png"
+        #plt.plot(figname)
         plt.savefig(figname)
     
   print('end month')
+
+# Echelle 07+14
+
+deg = .125
+size = .0625
+  
+for i in range(10):
+  if (i==0):
+    continue
+
+  deg2 = deg * i
+  size2 = (deg2 * size) /  deg
+  vmin = round(i * 0.9)
+  vmax = round(30 - i)  
+
+  print(deg2,size2,vmin,vmax)
+  plot_sequence_images(degree = .25, size = .125, vmin = (i+7), vmax = 30)
+  print("\n---------------\n")
+
+# Echelle 21-30
+
+deg = .125
+size = .0625
+  
+for i in range(10):
+  if (i==0):
+    continue
+
+  deg2 = deg * i
+  size2 = (deg2 * size) /  deg
+  vmin = round(i * 0.9)
+  vmax = round(30 - i)  
+
+  print(deg2,size2,vmin,vmax)
+  plot_sequence_images(degree = .25, size = .125, vmin = 7, vmax = vmax)
+  print("\n---------------\n")
 
 plot_sequence_images(degree = .25, size = .125, vmin = 7, vmax = 30)
 
