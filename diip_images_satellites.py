@@ -20,7 +20,9 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 plt.rcParams.update({'figure.max_open_warning': 0})
 import matplotlib.colors as mcolors
-import torch 
+from scipy.interpolate import griddata
+import torch
+from PIL import Image
 
 import tarfile
 import string
@@ -33,11 +35,14 @@ drive.mount("/content/drive")
 #!pip install opencv-contrib-python==3.4.2.16
 
 import cv2
+from google.colab.patches import cv2_imshow
 print(cv2.__version__)
 
 !apt-get install libgeos-3.5.0
 !apt-get install libgeos-dev
 !pip install https://github.com/matplotlib/basemap/archive/master.zip
+
+!pip install http://sourceforge.net/projects/matplotlib/files/matplotlib-toolkits/
 
 from mpl_toolkits.basemap import Basemap,cm
 
@@ -59,209 +64,212 @@ Données
 - Valeur
 """
 
-#lat and lon at 0.25 degree resolution
-# Try with 0.5 degree
-# Check lossing the info and 
-latg=np.arange(20.,50.,0.5)
-long1=np.arange(100.,150.,0.5)
+def _annotate2(ax, x, y):
+  # this all gets repeated below:
+  X, Y = np.meshgrid(x, y)
+  ax.plot(X.flat, Y.flat, 'o', color='m')
 
-for year in range(2008,2009):
- for month in range(5,6):
-  ndays = calendar.mdays[month] + (month==2 and calendar.isleap(year))
-  print(year,month,ndays)
-  #for dd in range (1,ndays+1):
-  for dd in range (5,8):
-   #print("Day #",dd)
-   colgrid = np.zeros([latg.shape[0],long1.shape[0]]) #initialization
-   fname=DIR+'IASIdaily_'+str(year)+"%02d"%month+"%02d"%dd+'.nc'
+def plot_sequence_images(degree = .25, size = .125, thres=7):
+  lat_g = np.arange(20.,50.,degree)
+  lon_g = np.arange(100.,150.,degree)
 
-
-   #print("fname",fname)
-   #read IASI data in nc archive
-   if not(os.path.isfile(fname)):
-    continue
-   nc = netCDF4.Dataset(fname)
-   flg=nc.variables['flag'][:]
-   mask1=(flg == 0)
-
-   lat=nc.variables['lat'][mask1]
-   lon=nc.variables['lon'][mask1]
-   col=nc.variables['LT'][mask1]
-   nc.close()
-   print('end read nc')
-
-   mask2=(np.isnan(col) == False) 
-
-  # gridding the data
-   for ilat in range(latg.shape[0]):
-    for ilon in range(long1.shape[0]):
-      # Grille régulier
-      # 25 km
-      # 0 25 degrée lattitude et longitude
-
-      # Grille regulier of 0.125 degree
-      maskgrid=(lat[:] >= (latg[ilat] - 0.25)) & (lat[:] < (latg[ilat] + 0.25)) & (lon[:] >= (long1[ilon] - 0.25)) & (lon[:] < (long1[ilon] + 0.25))
-      
-      # Defining invalid data
-      mask = mask2 & maskgrid
-
-      # Add a media filter for the grill regulier
-      if len(col[mask]) != 0:
-        colgrid[ilat,ilon] = np.mean(col[mask])
-
-   # We mark the values at colgrid as invalid because they are maybe false positives or bad sampling
-   colgrid = ma.masked_values(colgrid,0.)
-   
-   # plot daily maps
-   fig=plt.figure(figsize = (11,8))
-   plt.subplots_adjust(bottom=0.1,left=0.1,right=0.9,top=0.9)
-   
-   #------ subplot : IASI LT col
-   ax=fig.add_subplot(111)
-   p1=plt.subplot(1,1,1)
-   
-   #### to have coastline and countries in the background of the image
-   #m=Basemap(llcrnrlon=100.,llcrnrlat=20.,urcrnrlon=150.,urcrnrlat=48.,resolution='i')
-   #m.drawcoastlines()
-   #m.drawmapboundary()
-   #m.drawmeridians(np.r_[100:151:10], labels=[0,0,0,1], color='grey',fontsize=8,linewidth=0)
-   #m.drawparallels(np.r_[20:48:5], labels=[1,0,0,0], color='grey',fontsize=8,linewidth=0)
-
-   cs=plt.pcolor(long1,latg,colgrid,vmin=1,vmax=15)#,cmap=plt.cm.Greys) #check whether it is at the center
-   c=plt.colorbar(cs)#,location='bottom',pad="10%")
-   c.set_label("[DU]",fontsize=10)
-   c.ax.tick_params(labelsize=8)
-   sbpt="IASI LT ozone column "+str(year)+"%02d"%month+"%02d"%dd
-   plt.title(sbpt,fontsize=10)
-
-   figname="Daily_IASI_gridded_raw."+str(year)+"%02d"%month+"%02d"%dd+".png"
-   #figname="Daily_IASI_gridded_grey_raw."+str(year)+"%02d"%month+"%02d"%dd+".png"
-   #print("figname",figname)
-   plt.savefig(figname)
-   plt.clf()
-   
- print('end month')
-
-def plot_sequence_images(degree = .25, size = .125, vmin = 7, vmax = 30):
-  latg=np.arange(20.,50.,degree)
-  long1=np.arange(100.,150.,degree)
-  
   for year in range(2008,2009):
     for month in range(5,6):
       ndays = calendar.mdays[month] + (month==2 and calendar.isleap(year))
       print(year,month,ndays)
 
-      for dd in range (5,8):
-        colgrid = np.zeros([latg.shape[0],long1.shape[0]]) #initialization
-        fname=DIR+'IASIdaily_'+str(year)+"%02d"%month+"%02d"%dd+'.nc'
-        #print("fname",fname)
+      for dd in range (6,7):
+        #initialization
+        colgrid = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.float32)
+        fname = DIR+'IASIdaily_'+str(year)+"%02d"%month+"%02d"%dd+'.nc'
+
         #read IASI data in nc archive
         if not(os.path.isfile(fname)):
           continue
-        nc = netCDF4.Dataset(fname)
-        flg=nc.variables['flag'][:]
-        mask1=(flg == 0)
 
-        lat=nc.variables['lat'][mask1]
-        lon=nc.variables['lon'][mask1]
-        col=nc.variables['LT'][mask1]
+        nc = netCDF4.Dataset(fname)
+        flg = nc.variables['flag'][:]
+        mask1 = (flg == 0)
+
+        lat = nc.variables['lat'][mask1]
+        lon = nc.variables['lon'][mask1]
+        col = nc.variables['LT'][mask1]
         nc.close()
       
         print('end read nc')
 
-        mask2=(np.isnan(col) == False) 
+        mask2 = (np.isnan(col) == False) 
 
         # gridding the data
-        for ilat in range(latg.shape[0]):
-          for ilon in range(long1.shape[0]):
+        for ilat in range(lat_g.shape[0]):
+          for ilon in range(lon_g.shape[0]):
             # Grille régulier
             # 25 km
             # 0 25 degrée lattitude et longitude
 
             # Grille regulier of 0.125 degree
-            maskgrid=(lat[:] >= (latg[ilat] - size)) & (lat[:] < (latg[ilat] + size)) & (lon[:] >= (long1[ilon] - size)) & (lon[:] < (long1[ilon] + size))
+            maskgrid = (lat[:] >= (lat_g[ilat] - size)) & (lat[:] < (lat_g[ilat] + size)) & (lon[:] >= (lon_g[ilon] - size)) & (lon[:] < (lon_g[ilon] + size))
             
             # Defining invalid data
             mask = mask2 & maskgrid
 
-            #print("the col", col[mask])
-
             # Add a media filter for the grill regulier
+            isMask = (len(col[mask]) != 0) & (col[mask] >= thres).all()
+
             if len(col[mask]) != 0:
               median = np.mean(col[mask])
-              if (median >= vmin):
-                colgrid[ilat,ilon] = median
+              #if (median >= vmin):
+              colgrid[ilat,ilon] = median
               
         # We mark the values at colgrid as invalid because they are maybe false positives or bad sampling
-        colgrid = ma.masked_values(colgrid,0.)
-        
-        # plot daily maps
-        fig = plt.figure(figsize = (11,8))
-        plt.subplots_adjust(bottom=0.1,left=0.1,right=0.9,top=0.9)
-        
-        #------ subplot : IASI LT col
-        ax=fig.add_subplot(111)
-        p1=plt.subplot(1,1,1)
-        
-        #### to have coastline and countries in the background of the image
-        #m=Basemap(llcrnrlon=100.,llcrnrlat=20.,urcrnrlon=150.,urcrnrlat=48.,resolution='i')
-        #m.drawcoastlines()
-        #m.drawmapboundary()
-        #m.drawmeridians(np.r_[100:151:10], labels=[0,0,0,1], color='grey',fontsize=8,linewidth=0)
-        #m.drawparallels(np.r_[20:48:5], labels=[1,0,0,0], color='grey',fontsize=8,linewidth=0)
+        colgrid = ma.masked_values(colgrid, 0.)
 
-        cs=plt.pcolor(long1,latg,colgrid,vmin=vmin,vmax=vmax, cmap="jet")#,cmap=plt.cm.Greys) #check whether it is at the center
-        c=plt.colorbar(cs)#,location='bottom',pad="10%")
-        c.set_label("[DU]",fontsize=10)
-        c.ax.tick_params(labelsize=8)
-        sbpt="IASI LT ozone column "+str(year)+"%02d"%month+"%02d"%dd
-        plt.title(sbpt,fontsize=10)
-        figname=str(year)+"%02d"%month+"%02d"%dd+"_deg-"+str(degree)+"_size-"+str(size)+"_vmin-"+str(vmin)+"_vmax-"+str(vmax)+".png"
-        #plt.plot(figname)
-        plt.savefig(figname)
+        #for i in lon_g:
+        #  print("lon_g",i)
+
+        #print("---------------------")
+        
+        #for i in lat_g:
+        #  print("lat_g",i)
+
+        #print("---------------------")
+
+        #for i in colgrid:
+        #  print(type(i))
+
+        print(colgrid)
+
+        vis2 = cv2.cvtColor(colgrid, cv2.COLOR_GRAY2BGR)
+        plt.figure(figsize=(10,10))
+        #plt.axis("off")
+        plt.imshow(vis2)
+        plt.show()
+
+        #triang = tri.Triangulation(x, y)
+        #interpolator = tri.LinearTriInterpolator(triang, z)
+        #Xi, Yi = np.meshgrid(lon_g, lat_g)
+        #zi = interpolator(Xi, Yi)
+
+        #fig, ax = plt.subplots(figsize = (11,8), ncols=2)
+        fig, ax1 = plt.subplots(1, 1, figsize = (11,8))
+        ax1.pcolormesh(lon_g, lat_g, colgrid, shading='nearest',cmap="Greys", vmin=colgrid.min(), vmax=colgrid.max())
+        #ax1.contour(lon_g, lat_g, colgrid, cmap="jet", linewidths = 2, levels=30 )
+        #ax2.hist(colgrid)
+
+        #figname=str(year)+"%02d"%month+"%02d"%dd+"_deg-"+str(degree)+"_size-"+str(size)+"_vmin-"+str(vmin)+"_vmax-"+str(vmax)+".png"
+
+        #im = cv2.imread(source_image)
+        #print(im)
+
+        #_annotate2(ax_, lon_g, lat_g)
+        
+        
     
   print('end month')
 
-# Echelle 07+14
-
 deg = .125
 size = .0625
   
-for i in range(10):
+for i in range(40,41):
   if (i==0):
     continue
 
   deg2 = deg * i
   size2 = (deg2 * size) /  deg
-  vmin = round(i * 0.9)
-  vmax = round(30 - i)  
+  print(deg2,size2)
+  plot_sequence_images(degree = 5.0, size = 2.5, thres=(i-20))
 
-  print(deg2,size2,vmin,vmax)
-  plot_sequence_images(degree = .25, size = .125, vmin = (i+7), vmax = 30)
-  print("\n---------------\n")
+x=np.linspace(1.,10.,20)
+y=np.linspace(1.,10.,20)
+z=z = np.random.random(20)
+xi=np.linspace(1.,10.,10)
+yi=np.linspace(1.,10.,10)
 
-# Echelle 21-30
+X,Y= np.meshgrid(xi,yi)
 
-deg = .125
-size = .0625
-  
-for i in range(10):
-  if (i==0):
-    continue
+print(x.shape,y.shape, z.shape)
 
-  deg2 = deg * i
-  size2 = (deg2 * size) /  deg
-  vmin = round(i * 0.9)
-  vmax = round(30 - i)  
+#Z = griddata((x, y), z, (X, Y),method='nearest')
+#plt.contour(X,Y,Z)
 
-  print(deg2,size2,vmin,vmax)
-  plot_sequence_images(degree = .25, size = .125, vmin = 7, vmax = vmax)
-  print("\n---------------\n")
+import matplotlib.tri as tri
 
-plot_sequence_images(degree = .25, size = .125, vmin = 7, vmax = 30)
+np.random.seed(19680801)
+npts = 200
+ngridx = 100
+ngridy = 200
+x = np.random.uniform(-2, 2, npts)
+y = np.random.uniform(-2, 2, npts)
+z = x * np.exp(-x**2 - y**2)
 
-plot_sequence_images(degree = .5, size = .25, vmin = 1, vmax = 20)
+fig, (ax1, ax2) = plt.subplots(nrows=2)
 
-plot_sequence_images(degree = 1.5, size = .5, vmin = 1, vmax = 20)
+# -----------------------
+# Interpolation on a grid
+# -----------------------
+# A contour plot of irregularly spaced data coordinates
+# via interpolation on a grid.
 
-plot_sequence_images(degree = 2, size = 1, vmin = 1, vmax = 10)
+# Create grid values first.
+xi = np.linspace(-2.1, 2.1, ngridx)
+yi = np.linspace(-2.1, 2.1, ngridy)
+
+# Linearly interpolate the data (x, y) on a grid defined by (xi, yi).
+triang = tri.Triangulation(x, y)
+interpolator = tri.LinearTriInterpolator(triang, z)
+Xi, Yi = np.meshgrid(xi, yi)
+zi = interpolator(Xi, Yi)
+
+print(zi.shape)
+
+# Note that scipy.interpolate provides means to interpolate data on a grid
+# as well. The following would be an alternative to the four lines above:
+#from scipy.interpolate import griddata
+#zi = griddata((x, y), z, (xi[None, :], yi[:, None]), method='linear')
+
+ax1.contour(xi, yi, zi, levels=14, linewidths=0.5, colors='k')
+ax1.set(xlim=(-2, 2), ylim=(-2, 2))
+ax1.set_title('grid and contour (%d points, %d grid points)' %
+              (npts, ngridx * ngridy))
+
+# ----------
+# Tricontour
+# ----------
+# Directly supply the unordered, irregularly spaced coordinates
+# to tricontour.
+
+ax2.tricontour(x, y, z, levels=14, linewidths=0.5, colors='k')
+cntr2 = ax2.tricontourf(x, y, z, levels=14, cmap="RdBu_r")
+
+ax2.plot(x, y, 'ko', ms=3)
+ax2.set(xlim=(-2, 2), ylim=(-2, 2))
+ax2.set_title('tricontour (%d points)' % npts)
+
+plt.subplots_adjust(hspace=0.5)
+plt.show()
+
+np.random.seed(8)
+ndata = 10
+ny, nx = 100, 200
+xmin, xmax = 1, 10
+ymin, ymax = 1, 10
+x = np.linspace(1, 10, ndata)
+y = np.linspace(1, 10, ndata)
+z = np.random.random(ndata)
+x = np.r_[x,xmin,xmax]
+y = np.r_[y,ymax,ymin]
+z = np.r_[z,z[0],z[-1]]
+xi = np.linspace(xmin, xmax, nx)
+yi = np.linspace(ymin, ymax, ny)
+
+print(np.linspace(1, 10, ndata))
+
+X,Y= np.meshgrid(xi,yi)
+Z = griddata((x, y), z, (X, Y),method='nearest')
+plt.contour(X,Y,Z)
+
+vis = np.zeros((384, 836), np.float32)
+vis2 = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
+
+print(vis.shape,vis2.shape)
+
