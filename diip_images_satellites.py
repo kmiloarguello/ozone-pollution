@@ -22,6 +22,7 @@ plt.rcParams.update({'figure.max_open_warning': 0})
 import matplotlib.colors as mcolors
 from scipy.interpolate import griddata
 import torch
+from mpl_toolkits.mplot3d import Axes3D
 from PIL import Image
 
 import tarfile
@@ -69,9 +70,16 @@ def _annotate2(ax, x, y):
   X, Y = np.meshgrid(x, y)
   ax.plot(X.flat, Y.flat, 'o', color='m')
 
+def f(x, y):
+  return np.power(x, 2) - np.power(y, 2)
+
 def plot_sequence_images(degree = .25, size = .125, thres=7):
   lat_g = np.arange(20.,50.,degree)
   lon_g = np.arange(100.,150.,degree)
+
+  #initialization
+  colgrid = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
+  CA = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
 
   for year in range(2008,2009):
     for month in range(5,6):
@@ -79,8 +87,7 @@ def plot_sequence_images(degree = .25, size = .125, thres=7):
       print(year,month,ndays)
 
       for dd in range (6,7):
-        #initialization
-        colgrid = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.float32)
+        
         fname = DIR+'IASIdaily_'+str(year)+"%02d"%month+"%02d"%dd+'.nc'
 
         #read IASI data in nc archive
@@ -93,7 +100,7 @@ def plot_sequence_images(degree = .25, size = .125, thres=7):
 
         lat = nc.variables['lat'][mask1]
         lon = nc.variables['lon'][mask1]
-        col = nc.variables['LT'][mask1]
+        col = nc.variables['UT'][mask1]
         nc.close()
       
         print('end read nc')
@@ -118,135 +125,128 @@ def plot_sequence_images(degree = .25, size = .125, thres=7):
 
             if len(col[mask]) != 0:
               median = np.mean(col[mask])
-              #if (median >= vmin):
+              #if (median >= 25):
               colgrid[ilat,ilon] = median
-              
+              CA[ilat,ilon] = median
+
         # We mark the values at colgrid as invalid because they are maybe false positives or bad sampling
-        colgrid = ma.masked_values(colgrid, 0.)
+        #colgrid = ma.masked_values(colgrid, 0.)
 
-        #for i in lon_g:
-        #  print("lon_g",i)
+        mask3 = ma.masked_where( colgrid < np.mean(colgrid), colgrid)
+        colgrid[np.where(ma.getmask(mask3)==True)] = np.nan
 
-        #print("---------------------")
+        #CA[CA == colgrid.min()] = np.nan # colgrid.min()
+  
+        v_x, v_y = np.meshgrid(lon_g, lat_g)
+
+        gradx, grady = np.gradient (colgrid, edge_order=1)
+
+      
+        #Plot the original
+        fig1, (f1ax1) = plt.subplots(1, 1, figsize = (11,8))
+        f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='Blues', vmin=colgrid.min(), vmax=colgrid.max())
         
-        #for i in lat_g:
-        #  print("lat_g",i)
+        # Plot the 3D
+        fig2 = plt.figure(figsize = (11,8))
+        f2ax2 = Axes3D(fig2, elev=70)
+        f2ax2.plot_surface(v_x, v_y, colgrid, cmap='Blues',vmin=colgrid.min(), vmax=colgrid.max())
+        
+        #xi=np.linspace(colgrid.min(),colgrid.max(),10)
+        #yi=np.linspace(colgrid.min(),colgrid.max(),10)
+        #X,Y= np.meshgrid(xi,yi)
+        #print(lon_g.shape,lat_g.shape)
+        #Z = griddata(lon_g, lat_g, colgrid, (v_x, v_y),method='nearest')
+        #plt.contourf(X,Y,Z)
 
-        #print("---------------------")
-
-        #for i in colgrid:
-        #  print(type(i))
-
-        print(colgrid)
-
-        vis2 = cv2.cvtColor(colgrid, cv2.COLOR_GRAY2BGR)
-        plt.figure(figsize=(10,10))
-        #plt.axis("off")
-        plt.imshow(vis2)
-        plt.show()
-
-        #triang = tri.Triangulation(x, y)
-        #interpolator = tri.LinearTriInterpolator(triang, z)
-        #Xi, Yi = np.meshgrid(lon_g, lat_g)
-        #zi = interpolator(Xi, Yi)
-
-        #fig, ax = plt.subplots(figsize = (11,8), ncols=2)
-        fig, ax1 = plt.subplots(1, 1, figsize = (11,8))
-        ax1.pcolormesh(lon_g, lat_g, colgrid, shading='nearest',cmap="Greys", vmin=colgrid.min(), vmax=colgrid.max())
-        #ax1.contour(lon_g, lat_g, colgrid, cmap="jet", linewidths = 2, levels=30 )
+        fig3, f3ax1 = plt.subplots(1, 1, figsize = (11,8))
+        f3ax1.contourf(v_x, v_y, colgrid, colgrid.max(), cmap='Blues')
+        f3ax1.contour(v_x, v_y, colgrid, levels=5, colors = 'k', linewidths = 1, linestyles = 'solid' )
+        f3ax1.quiver(v_x, v_y, gradx , grady)
         #ax2.hist(colgrid)
 
-        #figname=str(year)+"%02d"%month+"%02d"%dd+"_deg-"+str(degree)+"_size-"+str(size)+"_vmin-"+str(vmin)+"_vmax-"+str(vmax)+".png"
-
-        #im = cv2.imread(source_image)
-        #print(im)
-
-        #_annotate2(ax_, lon_g, lat_g)
         
-        
-    
+  img = cv2.cvtColor(colgrid, cv2.COLOR_GRAY2BGR)
+  img = cv2.flip(img, 0)
+  img_grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)      
+  ##vis2 = cv2.cvtColor(CA, cv2.COLOR_BGR2GRAY)
+
+  ## Watershed
+  #ret, thresh = cv2.threshold(img_grey,colgrid.min(),colgrid.max(),cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
+  ## noise removal
+  #kernel = np.ones((3,3),np.uint8)
+  #opening = cv2.morphologyEx(thresh,cv2.MORPH_OPEN,kernel, iterations = 2)
+
+  ## sure background area
+  #sure_bg = cv2.dilate(opening,kernel,iterations= 2)
+
+  ## Finding sure foreground area
+  #dist_transform = cv2.distanceTransform(opening,cv2.DIST_L2,5)
+  #ret, sure_fg = cv2.threshold(dist_transform,0.3 * dist_transform.max(),colgrid.max(),colgrid.min())
+
+  ## Finding unknown region
+  #sure_fg = np.uint8(sure_fg)
+  #unknown = cv2.subtract(sure_bg,sure_fg)
+
+  #unknown[unknown < colgrid.max()] = colgrid.min()
+
+  ## Marker labelling
+  ##ret, markers = cv2.connectedComponents(sure_fg)
+
+  ## Add one to all labels so that sure background is not 0, but 1
+  ##markers = markers+1
+
+  ## Now, mark the region of unknown with zero
+  ##markers[unknown==colgrid.max()] = colgrid.min()
+
+  ##markers = cv2.watershed(img,markers)
+
+  _, ax1 = plt.subplots(1, 1, figsize = (11,8))
+  ax1.imshow(img, cmap="Greys", vmin=colgrid.min(), vmax=colgrid.max())
+  #ax2.imshow(unknown, cmap="Greys")
+
+  ## Below code convert image gradient in both x and y direction
+  lap = cv2.Laplacian(img,cv2.CV_64F,ksize=3) 
+  lap = np.uint8(np.absolute(lap))
+  ## Below code convert image gradient in x direction
+  sobelx= cv2.Sobel(img,0, dx=1,dy=0)
+  sobelx= np.uint8(np.absolute(sobelx))
+  ## Below code convert image gradient in y direction
+  sobely= cv2.Sobel(img,0, dx=0,dy=1)
+  sobely = np.uint8(np.absolute(sobely))
+
+  fig2, (ax4,ax5,ax6) = plt.subplots(1, 3, figsize = (20,15))
+  ax4.imshow(lap, cmap = 'jet')
+  ax5.imshow(sobelx, cmap = 'jet')
+  ax6.imshow(sobely, cmap = 'jet')
+
   print('end month')
 
 deg = .125
 size = .0625
+iteration = 6
   
-for i in range(40,41):
+for i in range(iteration, iteration + 1):
   if (i==0):
     continue
 
   deg2 = deg * i
   size2 = (deg2 * size) /  deg
   print(deg2,size2)
-  plot_sequence_images(degree = 5.0, size = 2.5, thres=(i-20))
+  plot_sequence_images(degree = deg2, size = size2, thres=(i-20))
 
-x=np.linspace(1.,10.,20)
-y=np.linspace(1.,10.,20)
-z=z = np.random.random(20)
-xi=np.linspace(1.,10.,10)
-yi=np.linspace(1.,10.,10)
+x = np.linspace(-1000, 1000, 50)
+y = np.linspace(-1000, 1100, 40)
 
-X,Y= np.meshgrid(xi,yi)
+v_x, v_y = np.meshgrid(x, y)
 
-print(x.shape,y.shape, z.shape)
+v_z = f(v_x, v_y)
 
-#Z = griddata((x, y), z, (X, Y),method='nearest')
-#plt.contour(X,Y,Z)
+Zm = ma.masked_where( v_z < 0, v_z)
+v_z[np.where(ma.getmask(Zm)==True)] = np.nan
 
-import matplotlib.tri as tri
-
-np.random.seed(19680801)
-npts = 200
-ngridx = 100
-ngridy = 200
-x = np.random.uniform(-2, 2, npts)
-y = np.random.uniform(-2, 2, npts)
-z = x * np.exp(-x**2 - y**2)
-
-fig, (ax1, ax2) = plt.subplots(nrows=2)
-
-# -----------------------
-# Interpolation on a grid
-# -----------------------
-# A contour plot of irregularly spaced data coordinates
-# via interpolation on a grid.
-
-# Create grid values first.
-xi = np.linspace(-2.1, 2.1, ngridx)
-yi = np.linspace(-2.1, 2.1, ngridy)
-
-# Linearly interpolate the data (x, y) on a grid defined by (xi, yi).
-triang = tri.Triangulation(x, y)
-interpolator = tri.LinearTriInterpolator(triang, z)
-Xi, Yi = np.meshgrid(xi, yi)
-zi = interpolator(Xi, Yi)
-
-print(zi.shape)
-
-# Note that scipy.interpolate provides means to interpolate data on a grid
-# as well. The following would be an alternative to the four lines above:
-#from scipy.interpolate import griddata
-#zi = griddata((x, y), z, (xi[None, :], yi[:, None]), method='linear')
-
-ax1.contour(xi, yi, zi, levels=14, linewidths=0.5, colors='k')
-ax1.set(xlim=(-2, 2), ylim=(-2, 2))
-ax1.set_title('grid and contour (%d points, %d grid points)' %
-              (npts, ngridx * ngridy))
-
-# ----------
-# Tricontour
-# ----------
-# Directly supply the unordered, irregularly spaced coordinates
-# to tricontour.
-
-ax2.tricontour(x, y, z, levels=14, linewidths=0.5, colors='k')
-cntr2 = ax2.tricontourf(x, y, z, levels=14, cmap="RdBu_r")
-
-ax2.plot(x, y, 'ko', ms=3)
-ax2.set(xlim=(-2, 2), ylim=(-2, 2))
-ax2.set_title('tricontour (%d points)' % npts)
-
-plt.subplots_adjust(hspace=0.5)
-plt.show()
+fig = plt.figure()
+ax = Axes3D(fig)
+ax.plot_surface(v_x, v_y, v_z, cmap='Blues');
 
 np.random.seed(8)
 ndata = 10
@@ -261,15 +261,10 @@ y = np.r_[y,ymax,ymin]
 z = np.r_[z,z[0],z[-1]]
 xi = np.linspace(xmin, xmax, nx)
 yi = np.linspace(ymin, ymax, ny)
-
-print(np.linspace(1, 10, ndata))
-
 X,Y= np.meshgrid(xi,yi)
+print(x)
+
+
 Z = griddata((x, y), z, (X, Y),method='nearest')
 plt.contour(X,Y,Z)
-
-vis = np.zeros((384, 836), np.float32)
-vis2 = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
-
-print(vis.shape,vis2.shape)
 
