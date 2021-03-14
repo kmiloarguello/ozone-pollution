@@ -70,15 +70,20 @@ def _annotate2(ax, x, y):
   X, Y = np.meshgrid(x, y)
   ax.plot(X.flat, Y.flat, 'o', color='m')
 
+def get_segment_crop(img,tol=0, mask=None):
+  if mask is None:
+    mask = img > tol
+  return img[np.ix_(mask.any(1), mask.any(0))]
+
 def f(x, y):
   return np.power(x, 2) - np.power(y, 2)
 
-def plot_sequence_images(degree = .25, size = .125, thres=7):
+def plot_sequence_images(degree = .25, size = .125, thres=7, iteration=1, image_type="LT", day=5):
   lat_g = np.arange(20.,50.,degree)
   lon_g = np.arange(100.,150.,degree)
 
   #initialization
-  colgrid = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
+  colgrid = np.ones([lat_g.shape[0],lon_g.shape[0]], np.uint8)
   CA = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
 
   for year in range(2008,2009):
@@ -86,7 +91,7 @@ def plot_sequence_images(degree = .25, size = .125, thres=7):
       ndays = calendar.mdays[month] + (month==2 and calendar.isleap(year))
       print(year,month,ndays)
 
-      for dd in range (6,7):
+      for dd in range (day,day+1):
         
         fname = DIR+'IASIdaily_'+str(year)+"%02d"%month+"%02d"%dd+'.nc'
 
@@ -100,7 +105,7 @@ def plot_sequence_images(degree = .25, size = .125, thres=7):
 
         lat = nc.variables['lat'][mask1]
         lon = nc.variables['lon'][mask1]
-        col = nc.variables['UT'][mask1]
+        col = nc.variables[image_type][mask1]
         nc.close()
       
         print('end read nc')
@@ -127,48 +132,102 @@ def plot_sequence_images(degree = .25, size = .125, thres=7):
               median = np.mean(col[mask])
               #if (median >= 25):
               colgrid[ilat,ilon] = median
-              CA[ilat,ilon] = median
+              #CA[ilat,ilon] = median
 
         # We mark the values at colgrid as invalid because they are maybe false positives or bad sampling
-        #colgrid = ma.masked_values(colgrid, 0.)
+        colgrid = ma.masked_values(colgrid, colgrid.min())
 
-        mask3 = ma.masked_where( colgrid < np.mean(colgrid), colgrid)
-        colgrid[np.where(ma.getmask(mask3)==True)] = np.nan
-
+        #mask3 = ma.masked_where( colgrid < np.mean(colgrid), colgrid)
+        #colgrid[np.where(ma.getmask(mask3)==True)] = np.nan
         #CA[CA == colgrid.min()] = np.nan # colgrid.min()
-  
+ 
         v_x, v_y = np.meshgrid(lon_g, lat_g)
+        gradx, grady = np.gradient(colgrid, edge_order=1)
 
-        gradx, grady = np.gradient (colgrid, edge_order=1)
-
-      
-        #Plot the original
+        ## Plot the original
         fig1, (f1ax1) = plt.subplots(1, 1, figsize = (11,8))
-        f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='Blues', vmin=colgrid.min(), vmax=colgrid.max())
-        
-        # Plot the 3D
+        f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='Greys', vmin=colgrid.min(), vmax=colgrid.max())
+        fig1.savefig(image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
+
+        ## Plot the 3D
         fig2 = plt.figure(figsize = (11,8))
-        f2ax2 = Axes3D(fig2, elev=70)
-        f2ax2.plot_surface(v_x, v_y, colgrid, cmap='Blues',vmin=colgrid.min(), vmax=colgrid.max())
+        f2ax2 = Axes3D(fig2, elev=50)
+        f2ax2.plot_surface(v_x, v_y, colgrid, cmap='Greys',vmin=colgrid.min(), vmax=colgrid.max())
+        fig2.savefig(image_type+"-surface-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
         
-        #xi=np.linspace(colgrid.min(),colgrid.max(),10)
-        #yi=np.linspace(colgrid.min(),colgrid.max(),10)
-        #X,Y= np.meshgrid(xi,yi)
-        #print(lon_g.shape,lat_g.shape)
-        #Z = griddata(lon_g, lat_g, colgrid, (v_x, v_y),method='nearest')
-        #plt.contourf(X,Y,Z)
+        ##xi=np.linspace(colgrid.min(),colgrid.max(),10)
+        ##yi=np.linspace(colgrid.min(),colgrid.max(),10)
+        ##X,Y= np.meshgrid(xi,yi)
+        ##print(lon_g.shape,lat_g.shape)
+        ##Z = griddata(lon_g, lat_g, colgrid, (v_x, v_y),method='nearest')
+        ##plt.contourf(X,Y,Z)
 
         fig3, f3ax1 = plt.subplots(1, 1, figsize = (11,8))
-        f3ax1.contourf(v_x, v_y, colgrid, colgrid.max(), cmap='Blues')
+        f3ax1.contourf(v_x, v_y, colgrid, colgrid.max(), cmap='Greys')
         f3ax1.contour(v_x, v_y, colgrid, levels=5, colors = 'k', linewidths = 1, linestyles = 'solid' )
         f3ax1.quiver(v_x, v_y, gradx , grady)
-        #ax2.hist(colgrid)
-
+        fig3.savefig(image_type+"-contour-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
         
-  img = cv2.cvtColor(colgrid, cv2.COLOR_GRAY2BGR)
-  img = cv2.flip(img, 0)
-  img_grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)      
-  ##vis2 = cv2.cvtColor(CA, cv2.COLOR_BGR2GRAY)
+        ##################
+        #### OPEN CV #####
+        ##################
+        
+        img = cv2.cvtColor(colgrid, cv2.COLOR_GRAY2BGR)
+        img = cv2.flip(img, 0)
+        img = cv2.normalize(img, np.ones((lat_g.shape[0],lon_g.shape[0])) , 0, 255, cv2.NORM_MINMAX )
+        img_grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)    
+
+        histogram = cv2.calcHist([img_grey],[0],None,[256],[0,256])
+
+        fig35, f35ax1 = plt.subplots(1, 1, figsize = (11,8))
+        #f35ax1.imshow(histogram)
+        f35ax1.hist(img_grey.ravel(),256,[0,256])
+        fig35.savefig(image_type+"-hist-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
+
+        ## Watershed
+        ret, thresh = cv2.threshold(img_grey, colgrid.min(),colgrid.max() , cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU )
+        
+        ## noise removal
+        kernel = np.ones((3,3),np.uint8)
+        closing = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations = 1)
+        median = cv2.medianBlur(closing, 3)
+        sure_bg = cv2.erode(closing, kernel,iterations= 1)
+
+        paint = cv2.inpaint(img_grey, closing ,2,cv2.INPAINT_TELEA)
+        invers_median = 255 - median
+        invers_thresh = 255 - thresh 
+
+        mask_backround = cv2.bitwise_and( invers_median, paint, mask=median)
+        img_result = cv2.subtract(paint, mask_backround)
+        img_result = cv2.subtract(img_result, median)
+        
+        ## Below code convert image gradient in both x and y direction
+        lap = cv2.Laplacian(img_result, cv2.CV_64F,ksize=3) 
+        lap = np.uint8(np.absolute(lap))
+        ## Below code convert image gradient in x direction
+        canny = cv2.Canny(img_result,100,200)
+        sobelx= cv2.Sobel(img_result, 0, dx=1,dy=0)
+        sobelx= np.uint8(np.absolute(sobelx))
+        ## Below code convert image gradient in y direction
+        sobely= cv2.Sobel(img_result, 0, dx=0,dy=1)
+        sobely = np.uint8(np.absolute(sobely))
+
+        fig4, (f4ax1,f4ax2,f4ax3) = plt.subplots(1,3, figsize = (20,15))
+        f4ax1.imshow(img_grey, cmap="Greys")
+        f4ax2.imshow(median, cmap="Greys")
+        f4ax3.imshow(img_result, cmap="Greys")
+        fig4.savefig(image_type+"-set-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
+
+        #fig6, (f6ax1,f6ax2,f6ax3) = plt.subplots(1,3, figsize = (20,15))
+        #f6ax1.imshow(median, cmap="Greys")
+        #f6ax2.imshow(paint, cmap="Greys")
+        #f6ax3.imshow(img_result, cmap="Greys")
+
+        ## Plot Gradient
+        fig5, (f5ax1,f5ax2) = plt.subplots(1, 2, figsize = (20,15))
+        f5ax1.imshow(lap, cmap = 'Greys')
+        f5ax2.imshow(canny, cmap = 'Greys')
+        fig5.savefig(image_type+"-border-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
 
   ## Watershed
   #ret, thresh = cv2.threshold(img_grey,colgrid.min(),colgrid.max(),cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
@@ -200,71 +259,27 @@ def plot_sequence_images(degree = .25, size = .125, thres=7):
 
   ##markers = cv2.watershed(img,markers)
 
-  _, ax1 = plt.subplots(1, 1, figsize = (11,8))
-  ax1.imshow(img, cmap="Greys", vmin=colgrid.min(), vmax=colgrid.max())
-  #ax2.imshow(unknown, cmap="Greys")
+  #_, ax1 = plt.subplots(1, 1, figsize = (11,8))
+  #ax1.imshow(img, cmap="Greys", vmin=colgrid.min(), vmax=colgrid.max())
+  ##ax2.imshow(unknown, cmap="Greys")
 
-  ## Below code convert image gradient in both x and y direction
-  lap = cv2.Laplacian(img,cv2.CV_64F,ksize=3) 
-  lap = np.uint8(np.absolute(lap))
-  ## Below code convert image gradient in x direction
-  sobelx= cv2.Sobel(img,0, dx=1,dy=0)
-  sobelx= np.uint8(np.absolute(sobelx))
-  ## Below code convert image gradient in y direction
-  sobely= cv2.Sobel(img,0, dx=0,dy=1)
-  sobely = np.uint8(np.absolute(sobely))
-
-  fig2, (ax4,ax5,ax6) = plt.subplots(1, 3, figsize = (20,15))
-  ax4.imshow(lap, cmap = 'jet')
-  ax5.imshow(sobelx, cmap = 'jet')
-  ax6.imshow(sobely, cmap = 'jet')
+  
 
   print('end month')
 
 deg = .125
 size = .0625
-iteration = 6
-  
-for i in range(iteration, iteration + 1):
+start = 5
+end = 6
+day = 5
+image_type="UT"
+
+for i in range(start,end):
   if (i==0):
     continue
 
   deg2 = deg * i
   size2 = (deg2 * size) /  deg
   print(deg2,size2)
-  plot_sequence_images(degree = deg2, size = size2, thres=(i-20))
-
-x = np.linspace(-1000, 1000, 50)
-y = np.linspace(-1000, 1100, 40)
-
-v_x, v_y = np.meshgrid(x, y)
-
-v_z = f(v_x, v_y)
-
-Zm = ma.masked_where( v_z < 0, v_z)
-v_z[np.where(ma.getmask(Zm)==True)] = np.nan
-
-fig = plt.figure()
-ax = Axes3D(fig)
-ax.plot_surface(v_x, v_y, v_z, cmap='Blues');
-
-np.random.seed(8)
-ndata = 10
-ny, nx = 100, 200
-xmin, xmax = 1, 10
-ymin, ymax = 1, 10
-x = np.linspace(1, 10, ndata)
-y = np.linspace(1, 10, ndata)
-z = np.random.random(ndata)
-x = np.r_[x,xmin,xmax]
-y = np.r_[y,ymax,ymin]
-z = np.r_[z,z[0],z[-1]]
-xi = np.linspace(xmin, xmax, nx)
-yi = np.linspace(ymin, ymax, ny)
-X,Y= np.meshgrid(xi,yi)
-print(x)
-
-
-Z = griddata((x, y), z, (X, Y),method='nearest')
-plt.contour(X,Y,Z)
+  plot_sequence_images(degree = deg2, size = size2, thres=(i-20), iteration=i, image_type=image_type, day=day )
 
