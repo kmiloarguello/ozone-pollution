@@ -146,13 +146,13 @@ def plot_sequence_images(degree = .25, size = .125, thres=7, iteration=1, image_
 
         ## Plot the original
         fig1, (f1ax1) = plt.subplots(1, 1, figsize = (11,8))
-        f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='Greys', vmin=colgrid.min(), vmax=colgrid.max())
+        f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='jet', vmin=colgrid.min(), vmax=colgrid.max())
         fig1.savefig(image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
 
         ## Plot the 3D
         fig2 = plt.figure(figsize = (11,8))
         f2ax2 = Axes3D(fig2, elev=50)
-        f2ax2.plot_surface(v_x, v_y, colgrid, cmap='Greys',vmin=colgrid.min(), vmax=colgrid.max())
+        f2ax2.plot_surface(v_x, v_y, colgrid, cmap='jet',vmin=colgrid.min(), vmax=colgrid.max())
         fig2.savefig(image_type+"-surface-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
         
         ##xi=np.linspace(colgrid.min(),colgrid.max(),10)
@@ -163,7 +163,7 @@ def plot_sequence_images(degree = .25, size = .125, thres=7, iteration=1, image_
         ##plt.contourf(X,Y,Z)
 
         fig3, f3ax1 = plt.subplots(1, 1, figsize = (11,8))
-        f3ax1.contourf(v_x, v_y, colgrid, colgrid.max(), cmap='Greys')
+        f3ax1.contourf(v_x, v_y, colgrid, colgrid.max(), cmap='jet')
         f3ax1.contour(v_x, v_y, colgrid, levels=5, colors = 'k', linewidths = 1, linestyles = 'solid' )
         f3ax1.quiver(v_x, v_y, gradx , grady)
         fig3.savefig(image_type+"-contour-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
@@ -218,6 +218,10 @@ def plot_sequence_images(degree = .25, size = .125, thres=7, iteration=1, image_
         f4ax3.imshow(img_result, cmap="Greys")
         fig4.savefig(image_type+"-set-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
 
+        fig45, (f45ax1) = plt.subplots(1, 1, figsize = (11,8))
+        f45ax1.imshow(img_result, cmap="jet")
+        fig45.savefig(image_type+"-result-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
+
         #fig6, (f6ax1,f6ax2,f6ax3) = plt.subplots(1,3, figsize = (20,15))
         #f6ax1.imshow(median, cmap="Greys")
         #f6ax2.imshow(paint, cmap="Greys")
@@ -271,7 +275,7 @@ deg = .125
 size = .0625
 start = 5
 end = 6
-day = 5
+day = 6
 image_type="UT"
 
 for i in range(start,end):
