@@ -24,6 +24,7 @@ from scipy.interpolate import griddata
 import torch
 from mpl_toolkits.mplot3d import Axes3D
 from PIL import Image
+from skimage import measure
 
 import tarfile
 import string
@@ -38,6 +39,8 @@ drive.mount("/content/drive")
 import cv2
 from google.colab.patches import cv2_imshow
 print(cv2.__version__)
+
+!pip install pyMCR
 
 !apt-get install libgeos-3.5.0
 !apt-get install libgeos-dev
@@ -55,6 +58,7 @@ import netCDF4
 """# Directory"""
 
 DIR = '/content/drive/MyDrive/StageUParis/DATA/H2O/'
+DIR_TEST = '/content/drive/MyDrive/StageUParis/Test/'
 #DIR='/DATA/IASI/EXTERNAL/SUSTAINABLE/DUFOUR/IASIO3daily_PolEASIA/H2O/'
 
 """# Main Code
@@ -65,25 +69,40 @@ Données
 - Valeur
 """
 
-def _annotate2(ax, x, y):
-  # this all gets repeated below:
-  X, Y = np.meshgrid(x, y)
-  ax.plot(X.flat, Y.flat, 'o', color='m')
+def plotHistogram(img):
+  color = ('b','g','r')
+  plt.figure()
+  for i,col in enumerate(color):
+      histr = cv2.calcHist([img],[i],None,[256],[0,256])
+      plt.plot(histr,color = col)
+      plt.xlim([0,256])
+  plt.show()
 
-def get_segment_crop(img,tol=0, mask=None):
-  if mask is None:
-    mask = img > tol
-  return img[np.ix_(mask.any(1), mask.any(0))]
+deg = .125
+size1 = .0625
+start = 5
+end = 6
+day = 6
+image_type="UT"
+year=2008
+month=5
 
-def f(x, y):
-  return np.power(x, 2) - np.power(y, 2)
+for i in range(start,end):
+  if (i==0):
+    continue
 
-def plot_sequence_images(degree = .25, size = .125, thres=7, iteration=1, image_type="LT", day=5):
+  degree = deg * i
+  size = (degree * size1) /  deg
+  thres=(i-20)
+  iteration=i
+  #image_name = DIR_TEST + image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%day+"-i-0"+str(i)+".png"
+  # plot_sequence_images(degree = deg2, size = size2, thres=(i-20), iteration=i, image_type=image_type, day=day )
+
   lat_g = np.arange(20.,50.,degree)
   lon_g = np.arange(100.,150.,degree)
 
   #initialization
-  colgrid = np.ones([lat_g.shape[0],lon_g.shape[0]], np.uint8)
+  colgrid = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
   CA = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
 
   for year in range(2008,2009):
@@ -130,31 +149,29 @@ def plot_sequence_images(degree = .25, size = .125, thres=7, iteration=1, image_
 
             if len(col[mask]) != 0:
               median = np.mean(col[mask])
-              #if (median >= 25):
+              #if (median >= 30):
               colgrid[ilat,ilon] = median
+
               #CA[ilat,ilon] = median
 
         # We mark the values at colgrid as invalid because they are maybe false positives or bad sampling
-        colgrid = ma.masked_values(colgrid, colgrid.min())
+        colgrid = ma.masked_values(colgrid, 0.)
 
-        #mask3 = ma.masked_where( colgrid < np.mean(colgrid), colgrid)
-        #colgrid[np.where(ma.getmask(mask3)==True)] = np.nan
-        #CA[CA == colgrid.min()] = np.nan # colgrid.min()
- 
         v_x, v_y = np.meshgrid(lon_g, lat_g)
         gradx, grady = np.gradient(colgrid, edge_order=1)
 
         ## Plot the original
-        fig1, (f1ax1) = plt.subplots(1, 1, figsize = (11,8))
+        fig1, (f1ax1) = plt.subplots(1, 1, figsize=(11,9))
         f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='jet', vmin=colgrid.min(), vmax=colgrid.max())
-        fig1.savefig(image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
-
-        ## Plot the 3D
-        fig2 = plt.figure(figsize = (11,8))
-        f2ax2 = Axes3D(fig2, elev=50)
-        f2ax2.plot_surface(v_x, v_y, colgrid, cmap='jet',vmin=colgrid.min(), vmax=colgrid.max())
-        fig2.savefig(image_type+"-surface-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
+        f1ax1.axis('off')
+        fig1.savefig(DIR_TEST + image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png", pad_inches=1)
         
+        ## Plot the 3D
+        #fig2 = plt.figure(figsize = (11,8))
+        #f2ax2 = Axes3D(fig2, elev=50)
+        #f2ax2.plot_surface(v_x, v_y, colgrid, cmap='jet',vmin=colgrid.min(), vmax=colgrid.max())
+        #fig2.savefig(image_type+"-surface-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
+
         ##xi=np.linspace(colgrid.min(),colgrid.max(),10)
         ##yi=np.linspace(colgrid.min(),colgrid.max(),10)
         ##X,Y= np.meshgrid(xi,yi)
@@ -162,128 +179,182 @@ def plot_sequence_images(degree = .25, size = .125, thres=7, iteration=1, image_
         ##Z = griddata(lon_g, lat_g, colgrid, (v_x, v_y),method='nearest')
         ##plt.contourf(X,Y,Z)
 
-        fig3, f3ax1 = plt.subplots(1, 1, figsize = (11,8))
-        f3ax1.contourf(v_x, v_y, colgrid, colgrid.max(), cmap='jet')
-        f3ax1.contour(v_x, v_y, colgrid, levels=5, colors = 'k', linewidths = 1, linestyles = 'solid' )
-        f3ax1.quiver(v_x, v_y, gradx , grady)
-        fig3.savefig(image_type+"-contour-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
-        
-        ##################
-        #### OPEN CV #####
-        ##################
-        
-        img = cv2.cvtColor(colgrid, cv2.COLOR_GRAY2BGR)
-        img = cv2.flip(img, 0)
-        img = cv2.normalize(img, np.ones((lat_g.shape[0],lon_g.shape[0])) , 0, 255, cv2.NORM_MINMAX )
-        img_grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)    
-
-        histogram = cv2.calcHist([img_grey],[0],None,[256],[0,256])
-
-        fig35, f35ax1 = plt.subplots(1, 1, figsize = (11,8))
-        #f35ax1.imshow(histogram)
-        f35ax1.hist(img_grey.ravel(),256,[0,256])
-        fig35.savefig(image_type+"-hist-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
-
-        ## Watershed
-        ret, thresh = cv2.threshold(img_grey, colgrid.min(),colgrid.max() , cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU )
-        
-        ## noise removal
-        kernel = np.ones((3,3),np.uint8)
-        closing = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations = 1)
-        median = cv2.medianBlur(closing, 3)
-        sure_bg = cv2.erode(closing, kernel,iterations= 1)
-
-        paint = cv2.inpaint(img_grey, closing ,2,cv2.INPAINT_TELEA)
-        invers_median = 255 - median
-        invers_thresh = 255 - thresh 
-
-        mask_backround = cv2.bitwise_and( invers_median, paint, mask=median)
-        img_result = cv2.subtract(paint, mask_backround)
-        img_result = cv2.subtract(img_result, median)
-        
-        ## Below code convert image gradient in both x and y direction
-        lap = cv2.Laplacian(img_result, cv2.CV_64F,ksize=3) 
-        lap = np.uint8(np.absolute(lap))
-        ## Below code convert image gradient in x direction
-        canny = cv2.Canny(img_result,100,200)
-        sobelx= cv2.Sobel(img_result, 0, dx=1,dy=0)
-        sobelx= np.uint8(np.absolute(sobelx))
-        ## Below code convert image gradient in y direction
-        sobely= cv2.Sobel(img_result, 0, dx=0,dy=1)
-        sobely = np.uint8(np.absolute(sobely))
-
-        fig4, (f4ax1,f4ax2,f4ax3) = plt.subplots(1,3, figsize = (20,15))
-        f4ax1.imshow(img_grey, cmap="Greys")
-        f4ax2.imshow(median, cmap="Greys")
-        f4ax3.imshow(img_result, cmap="Greys")
-        fig4.savefig(image_type+"-set-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
-
-        fig45, (f45ax1) = plt.subplots(1, 1, figsize = (11,8))
-        f45ax1.imshow(img_result, cmap="jet")
-        fig45.savefig(image_type+"-result-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
-
-        #fig6, (f6ax1,f6ax2,f6ax3) = plt.subplots(1,3, figsize = (20,15))
-        #f6ax1.imshow(median, cmap="Greys")
-        #f6ax2.imshow(paint, cmap="Greys")
-        #f6ax3.imshow(img_result, cmap="Greys")
-
-        ## Plot Gradient
-        fig5, (f5ax1,f5ax2) = plt.subplots(1, 2, figsize = (20,15))
-        f5ax1.imshow(lap, cmap = 'Greys')
-        f5ax2.imshow(canny, cmap = 'Greys')
-        fig5.savefig(image_type+"-border-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
-
-  ## Watershed
-  #ret, thresh = cv2.threshold(img_grey,colgrid.min(),colgrid.max(),cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
-  ## noise removal
-  #kernel = np.ones((3,3),np.uint8)
-  #opening = cv2.morphologyEx(thresh,cv2.MORPH_OPEN,kernel, iterations = 2)
-
-  ## sure background area
-  #sure_bg = cv2.dilate(opening,kernel,iterations= 2)
-
-  ## Finding sure foreground area
-  #dist_transform = cv2.distanceTransform(opening,cv2.DIST_L2,5)
-  #ret, sure_fg = cv2.threshold(dist_transform,0.3 * dist_transform.max(),colgrid.max(),colgrid.min())
-
-  ## Finding unknown region
-  #sure_fg = np.uint8(sure_fg)
-  #unknown = cv2.subtract(sure_bg,sure_fg)
-
-  #unknown[unknown < colgrid.max()] = colgrid.min()
-
-  ## Marker labelling
-  ##ret, markers = cv2.connectedComponents(sure_fg)
-
-  ## Add one to all labels so that sure background is not 0, but 1
-  ##markers = markers+1
-
-  ## Now, mark the region of unknown with zero
-  ##markers[unknown==colgrid.max()] = colgrid.min()
-
-  ##markers = cv2.watershed(img,markers)
-
-  #_, ax1 = plt.subplots(1, 1, figsize = (11,8))
-  #ax1.imshow(img, cmap="Greys", vmin=colgrid.min(), vmax=colgrid.max())
-  ##ax2.imshow(unknown, cmap="Greys")
-
-  
+        #fig3, f3ax1 = plt.subplots(1, 1, figsize = (11,8))
+        #f3ax1.contourf(v_x, v_y, colgrid, colgrid.max(), cmap='jet')
+        #f3ax1.contour(v_x, v_y, colgrid, levels=5, colors = 'k', linewidths = 1, linestyles = 'solid' )
+        #f3ax1.quiver(v_x, v_y, gradx , grady)
+        #fig3.savefig(image_type+"-contour-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
 
   print('end month')
 
-deg = .125
-size = .0625
-start = 5
-end = 6
-day = 6
-image_type="UT"
+colgrid
 
-for i in range(start,end):
-  if (i==0):
-    continue
+def create_mask(image):
+    gray = cv2.cvtColor( image, cv2.COLOR_BGR2GRAY )
+    blurred = cv2.GaussianBlur( gray, (9,9), 0 )
+    _,thresh_img = cv2.threshold( blurred, 0, 255, cv2.THRESH_BINARY)
+    thresh_img = cv2.erode( thresh_img, None, iterations=2 )
+    #thresh_img  = cv2.dilate( thresh_img, None, iterations=4 )
+    # perform a connected component analysis on the thresholded image,
+    # then initialize a mask to store only the "large" components
+    labels = measure.label( thresh_img, neighbors=8, background=0 )
+    mask = np.zeros( thresh_img.shape, dtype="uint8" )
+    # loop over the unique components
+    for label in np.unique( labels ):
+        # if this is the background label, ignore it
+        if label == 0:
+            continue
+        # otherwise, construct the label mask and count the
+        # number of pixels
+        labelMask = np.zeros( thresh_img.shape, dtype="uint8" )
+        labelMask[labels == label] = 255
+        numPixels = cv2.countNonZero( labelMask )
+        # if the number of pixels in the component is sufficiently
+        # large, then add it to our mask of "large blobs"
+        if numPixels > 300:
+            mask = cv2.add( mask, labelMask )
+    return mask
 
-  deg2 = deg * i
-  size2 = (deg2 * size) /  deg
-  print(deg2,size2)
-  plot_sequence_images(degree = deg2, size = size2, thres=(i-20), iteration=i, image_type=image_type, day=day )
+img = cv2.imread(DIR_TEST + 'ref-map.png')
+
+#img = cv2.imread(image_name)
+#M = np.float32([[1, 0, -40], [0, 1, -30]])
+#img = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]))
+
+hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+# reds 
+low_reds = np.array([0,0,0], dtype=np.uint8)
+high_reds = np.array([255,255,255], dtype=np.uint8)
+
+#Azules:
+azul_bajos = np.array([100,128,0], dtype=np.uint8)
+azul_altos = np.array([215,255,255], dtype=np.uint8)
+
+mascara_azul = cv2.inRange(hsv, azul_bajos, azul_altos)
+
+dist = cv2.bitwise_and(img, img, mask=mascara_azul)
+gray = cv2.cvtColor(dist, cv2.COLOR_BGR2GRAY)
+
+## Display it
+f1, ax1 = plt.subplots(1, 1, figsize=(11,8))
+ax1.imshow(dist)
+
+f2, ax2 = plt.subplots(1,1)
+ax2.hist(img.ravel(),255,[1,254])
+plt.show()
+
+# Conductivité de Tukey
+def phi_1(gradI, k):
+    return np.exp(-np.square(gradI / k))
+
+# Conductivité de Lorentz
+def phi_2(gradI, k):
+    return 1 / (1 + np.square(gradI / k))
+
+
+def Diffusion(im, steps, b, method=phi_1, l=0.25):
+    """
+    Arguments:
+        :im: ndarray to be filterred
+        :steps: number of time steps to compute
+        :b: factor in conduction coefficient computation
+        :method: [1|2] conduction function to use (phi_1 or phi_2)
+        :l: (0<lamb<=0.25) lambda in the scheme (CFL)
+    
+    Returns:
+        The image filterred
+    """
+    temp = np.zeros(im.shape, dtype=im.dtype)
+    # Iterate over "time"
+    for t in range(steps): 
+        # Compute the gradients over the 4 directions
+        dn = im[:-2,1:-1] - im[1:-1,1:-1] 
+        ds = im[2:,1:-1] - im[1:-1,1:-1] 
+        de = im[1:-1,2:] - im[1:-1,1:-1] 
+        dw = im[1:-1,:-2] - im[1:-1,1:-1] 
+
+        # Multiply by diffusion coefficients
+        temp[1:-1,1:-1] = im[1:-1,1:-1] + l * (method(dn,b)*dn + method(ds,b)*ds + method(de,b)*de + method(dw,b)*dw) 
+        # Apply scheme
+        im = temp 
+    return im
+
+blurred = cv2.GaussianBlur( img, (9,9), 0 )
+#_img = Diffusion(gray, 300, 0.1, phi_1, .01)
+f, (ax1,ax2) = plt.subplots(1, 2, figsize = (11,8))
+ax1.imshow(gray, cmap="Greys")
+ax2.imshow(blurred, cmap="Greys")
+
+## Below code convert image gradient in both x and y direction
+lap = cv2.Laplacian(gray, cv2.CV_64F,ksize=3) 
+lap = np.uint8(np.absolute(lap))
+## Below code convert image gradient in x direction
+canny = cv2.Canny(gray,100,200)
+sobelx= cv2.Sobel(gray, 0, dx=1,dy=0)
+sobelx= np.uint8(np.absolute(sobelx))
+## Below code convert image gradient in y direction
+sobely= cv2.Sobel(gray, 0, dx=0,dy=1)
+sobely = np.uint8(np.absolute(sobely))
+
+print(canny.shape, lap.shape)
+
+f, (ax,ax2) = plt.subplots(2,1 , figsize = (21,18))
+ax.imshow(lap, cmap="jet")
+ax2.imshow(canny, cmap="Greys")
+
+kernel = np.ones((3,3),np.uint8)
+closing = cv2.morphologyEx(mascara_azul, cv2.MORPH_CLOSE, kernel, iterations = 1)
+median = cv2.medianBlur(closing, 3)
+mask = create_mask(img)
+
+f, (ax1,ax2,ax3) = plt.subplots(1, 3, figsize = (11,8))
+ax1.imshow(closing, cmap="Greys")
+ax2.imshow(mask, cmap="Greys")
+ax3.imshow(median, cmap="Greys")
+
+paint = cv2.inpaint(gray, mask, 3, cv2.INPAINT_TELEA)
+
+f, ax = plt.subplots(1, 1)
+ax.imshow(paint, cmap="jet")
+
+#invers_median = 255 - median
+#invers_thresh = 255 - thresh 
+
+mask_backround = cv2.bitwise_and(create_mask(img), paint, mask=create_mask(img))
+#img_result = cv2.subtract(paint, mask_backround)
+#img_result = cv2.subtract(img_result, median)
+
+plt.imshow(mask_backround, cmap="jet")
+
+connect = cv2.connectedComponentsWithStats(mask_backround, connectivity=8, ltype=cv2.CV_32S) 
+
+# The first cell is the number of labels
+num_labels = connect[0]
+# The second cell is the label matrix
+labels = connect[1]
+# The third cell is the stat matrix
+stats = connect[2]
+# The fourth cell is the centroid matrix
+centroids = connect[3]
+
+print("num_labels", num_labels)
+f, ax = plt.subplots(1, 1, figsize = (11,8))
+ax.imshow(img)
+
+def imshow_components(labels):
+    # Map component labels to hue val
+    label_hue = np.uint8(170 * labels/np.max(labels))
+    blank_ch = 255*np.ones_like(label_hue)
+    labeled_img = cv2.merge([label_hue, blank_ch, blank_ch])
+
+    # cvt to BGR for display
+    labeled_img = cv2.cvtColor(labeled_img, cv2.COLOR_HSV2BGR)
+
+    # set bg label to black
+    labeled_img[label_hue==0] = 0
+
+    plt.imshow(labeled_img)
+
+imshow_components(labels)
 
