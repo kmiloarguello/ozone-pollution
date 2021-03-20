@@ -24,7 +24,7 @@ from scipy.interpolate import griddata
 import torch
 from mpl_toolkits.mplot3d import Axes3D
 from PIL import Image
-from skimage import measure
+from skimage import measure, transform
 
 import tarfile
 import string
@@ -83,7 +83,7 @@ size1 = .0625
 start = 5
 end = 6
 day = 6
-image_type="UT"
+image_type="LT"
 year=2008
 month=5
 
@@ -95,7 +95,7 @@ for i in range(start,end):
   size = (degree * size1) /  deg
   thres=(i-20)
   iteration=i
-  #image_name = DIR_TEST + image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%day+"-i-0"+str(i)+".png"
+  image_name = DIR_TEST + image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%day+"-i-0"+str(i)+".png"
   # plot_sequence_images(degree = deg2, size = size2, thres=(i-20), iteration=i, image_type=image_type, day=day )
 
   lat_g = np.arange(20.,50.,degree)
@@ -163,7 +163,7 @@ for i in range(start,end):
         ## Plot the original
         fig1, (f1ax1) = plt.subplots(1, 1, figsize=(11,9))
         f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='jet', vmin=colgrid.min(), vmax=colgrid.max())
-        f1ax1.axis('off')
+        #f1ax1.axis('off')
         fig1.savefig(DIR_TEST + image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png", pad_inches=1)
         
         ## Plot the 3D
@@ -187,18 +187,35 @@ for i in range(start,end):
 
   print('end month')
 
-colgrid
+print(v_x.shape, v_x.max())
+print(v_y.shape, v_y.max())
+print(colgrid)
+
+#import numpy as np, cv2
+data = np.full((colgrid.shape[0], colgrid.shape[1]), colgrid, np.uint8)
+img_bgr = cv2.cvtColor(data, cv2.COLOR_GRAY2BGR)
+gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+
+
+print(gray.shape, type(gray))
+
+f1, ax1 = plt.subplots(1, 1, figsize=(11,8))
+ax1.imshow(vis3 , cmap="gray")
+
+
 
 def create_mask(image):
-    gray = cv2.cvtColor( image, cv2.COLOR_BGR2GRAY )
-    blurred = cv2.GaussianBlur( gray, (9,9), 0 )
+    #gray = cv2.cvtColor( image, cv2.COLOR_BGR2GRAY )
+    blurred = cv2.GaussianBlur( image, (9,9), 0 )
     _,thresh_img = cv2.threshold( blurred, 0, 255, cv2.THRESH_BINARY)
-    thresh_img = cv2.erode( thresh_img, None, iterations=2 )
+    thresh_img = cv2.erode( thresh_img, None, iterations=7 )
+    #thresh_img = cv2.morphologyEx(thresh_img, cv2.MORPH_CLOSE, np.ones((6,6),np.uint8), iterations = 5)
+
     #thresh_img  = cv2.dilate( thresh_img, None, iterations=4 )
     # perform a connected component analysis on the thresholded image,
     # then initialize a mask to store only the "large" components
     labels = measure.label( thresh_img, neighbors=8, background=0 )
-    mask = np.zeros( thresh_img.shape, dtype="uint8" )
+    mask = np.zeros( thresh_img.shape, dtype='uint8' )
     # loop over the unique components
     for label in np.unique( labels ):
         # if this is the background label, ignore it
@@ -206,7 +223,7 @@ def create_mask(image):
             continue
         # otherwise, construct the label mask and count the
         # number of pixels
-        labelMask = np.zeros( thresh_img.shape, dtype="uint8" )
+        labelMask = np.zeros( thresh_img.shape, dtype='uint8' )
         labelMask[labels == label] = 255
         numPixels = cv2.countNonZero( labelMask )
         # if the number of pixels in the component is sufficiently
@@ -214,6 +231,30 @@ def create_mask(image):
         if numPixels > 300:
             mask = cv2.add( mask, labelMask )
     return mask
+
+def fillhole(input_image):
+    '''
+    input gray binary image  get the filled image by floodfill method
+    Note: only holes surrounded in the connected regions will be filled.
+    :param input_image:
+    :return:
+    '''
+    im_flood_fill = input_image.copy()
+    h, w = input_image.shape[:2]
+    mask = np.zeros((h + 2, w + 2), np.uint8)
+    im_flood_fill = im_flood_fill.astype("uint8")
+    cv2.floodFill(im_flood_fill, mask, (0, 0), 255)
+    im_flood_fill_inv = cv2.bitwise_not(im_flood_fill)
+    img_out = input_image | im_flood_fill_inv
+    return img_out
+
+low_blue_rgb = np.uint8([[[ 255,0,0]]])  
+low_blue_hsv = cv2.cvtColor(low_blue_rgb,cv2.COLOR_RGB2HSV)
+print(low_blue_hsv)
+
+_hs = np.uint8([[[130,255,255 ]]])
+_rg = cv2.cvtColor(_hs,cv2.COLOR_HSV2RGB)
+print(_rg)
 
 img = cv2.imread(DIR_TEST + 'ref-map.png')
 
@@ -224,24 +265,29 @@ img = cv2.imread(DIR_TEST + 'ref-map.png')
 hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
 # reds 
-low_reds = np.array([0,0,0], dtype=np.uint8)
-high_reds = np.array([255,255,255], dtype=np.uint8)
+#low_reds = np.array([0,104,64], dtype=np.uint8) # RGB: 64, 38, 38
+high_reds = np.array([100,255,255], dtype=np.uint8)
 
 #Azules:
-azul_bajos = np.array([100,128,0], dtype=np.uint8)
-azul_altos = np.array([215,255,255], dtype=np.uint8)
+low_blues = np.array([110,50,50], dtype=np.uint8) # RGB: 40,43,50
+high_blues = np.array([130,255,255], dtype=np.uint8) # RGB: 85,0,255
 
-mascara_azul = cv2.inRange(hsv, azul_bajos, azul_altos)
+lows = np.array([1,1,1], dtype=np.uint8)
+highs = np.array([255,255,255], dtype=np.uint8)
 
-dist = cv2.bitwise_and(img, img, mask=mascara_azul)
+global_mask = cv2.inRange(hsv, lows, highs)
+
+dist = cv2.bitwise_and(img, img, mask=global_mask)
 gray = cv2.cvtColor(dist, cv2.COLOR_BGR2GRAY)
+
+print(gray.shape, type(gray))
 
 ## Display it
 f1, ax1 = plt.subplots(1, 1, figsize=(11,8))
-ax1.imshow(dist)
+ax1.imshow(img , cmap="gray")
 
 f2, ax2 = plt.subplots(1,1)
-ax2.hist(img.ravel(),255,[1,254])
+ax2.hist(gray.ravel(),255,[1,254])
 plt.show()
 
 # Conductivité de Tukey
@@ -280,14 +326,53 @@ def Diffusion(im, steps, b, method=phi_1, l=0.25):
         im = temp 
     return im
 
-blurred = cv2.GaussianBlur( img, (9,9), 0 )
-#_img = Diffusion(gray, 300, 0.1, phi_1, .01)
-f, (ax1,ax2) = plt.subplots(1, 2, figsize = (11,8))
-ax1.imshow(gray, cmap="Greys")
-ax2.imshow(blurred, cmap="Greys")
+kernel = np.ones((3,3),np.uint8)
+
+mask = fillhole(gray)
+mask = cv2.erode( mask, None, iterations=1 )
+
+
+opening = cv2.morphologyEx(gray, cv2.MORPH_OPEN, kernel, iterations = 5)
+closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel, iterations = 5)
+blurred = cv2.GaussianBlur( closing, (9,9), 0 )
+
+
+blurred_paint = cv2.inpaint(gray, mask, 3, cv2.INPAINT_TELEA)
+global_region = cv2.morphologyEx(blurred_paint, cv2.MORPH_OPEN, kernel, iterations = 5)
+
+f, (ax1,ax2,ax3) = plt.subplots(1, 3, figsize = (11,8))
+ax1.imshow(blurred, cmap="gray")
+ax2.imshow(mask, cmap="gray")
+ax3.imshow(global_region, cmap="gray")
+
+img1 = gray.copy()
+img2 = global_region.copy()
+
+# I want to put logo on top-left corner, So I create a ROI
+rows,cols = img2.shape
+roi = img1[0:rows, 0:cols ]
+
+# Now create a mask of logo and create its inverse mask also
+#img2gray = cv2.cvtColor(img2,cv2.COLOR_BGR2GRAY)
+#ret, mask = cv2.threshold(img2gray, 10, 255, cv2.THRESH_BINARY)
+mask_inv = cv2.bitwise_not(mask)
+
+# Now black-out the area of logo in ROI
+img1_bg = cv2.bitwise_and(roi,roi,mask = mask_inv)
+
+# Take only region of logo from logo image.
+img2_fg = cv2.bitwise_and(img2,img2,mask = mask)
+
+# Put logo in ROI and modify the main image
+#dst = cv2.add(img1_bg,img2_fg)
+#img1[0:rows, 0:cols ] = dst
+
+
+f, (ax) = plt.subplots(1,1 , figsize = (11,8))
+ax.imshow(img1_bg, cmap="gray")
 
 ## Below code convert image gradient in both x and y direction
-lap = cv2.Laplacian(gray, cv2.CV_64F,ksize=3) 
+lap = cv2.Laplacian(global_region, cv2.CV_64F,ksize=3) 
 lap = np.uint8(np.absolute(lap))
 ## Below code convert image gradient in x direction
 canny = cv2.Canny(gray,100,200)
@@ -297,37 +382,11 @@ sobelx= np.uint8(np.absolute(sobelx))
 sobely= cv2.Sobel(gray, 0, dx=0,dy=1)
 sobely = np.uint8(np.absolute(sobely))
 
-print(canny.shape, lap.shape)
+f, (ax) = plt.subplots(1,1 , figsize = (11,8))
+ax.imshow(lap, cmap="gray")
+#ax2.imshow(canny, cmap="Greys")
 
-f, (ax,ax2) = plt.subplots(2,1 , figsize = (21,18))
-ax.imshow(lap, cmap="jet")
-ax2.imshow(canny, cmap="Greys")
-
-kernel = np.ones((3,3),np.uint8)
-closing = cv2.morphologyEx(mascara_azul, cv2.MORPH_CLOSE, kernel, iterations = 1)
-median = cv2.medianBlur(closing, 3)
-mask = create_mask(img)
-
-f, (ax1,ax2,ax3) = plt.subplots(1, 3, figsize = (11,8))
-ax1.imshow(closing, cmap="Greys")
-ax2.imshow(mask, cmap="Greys")
-ax3.imshow(median, cmap="Greys")
-
-paint = cv2.inpaint(gray, mask, 3, cv2.INPAINT_TELEA)
-
-f, ax = plt.subplots(1, 1)
-ax.imshow(paint, cmap="jet")
-
-#invers_median = 255 - median
-#invers_thresh = 255 - thresh 
-
-mask_backround = cv2.bitwise_and(create_mask(img), paint, mask=create_mask(img))
-#img_result = cv2.subtract(paint, mask_backround)
-#img_result = cv2.subtract(img_result, median)
-
-plt.imshow(mask_backround, cmap="jet")
-
-connect = cv2.connectedComponentsWithStats(mask_backround, connectivity=8, ltype=cv2.CV_32S) 
+connect = cv2.connectedComponentsWithStats(global_region, connectivity=8, ltype=cv2.CV_32S) 
 
 # The first cell is the number of labels
 num_labels = connect[0]
@@ -339,8 +398,6 @@ stats = connect[2]
 centroids = connect[3]
 
 print("num_labels", num_labels)
-f, ax = plt.subplots(1, 1, figsize = (11,8))
-ax.imshow(img)
 
 def imshow_components(labels):
     # Map component labels to hue val
@@ -357,4 +414,102 @@ def imshow_components(labels):
     plt.imshow(labeled_img)
 
 imshow_components(labels)
+
+#Create MSER object
+mser = cv2.MSER_create()
+vis = lap.copy()
+
+#detect regions in gray scale image
+regions, _ = mser.detectRegions(gray)
+
+hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions]
+
+cv2.polylines(vis, hulls, 5, (255, 0, 0))
+
+f, ax = plt.subplots(1, 1, figsize=(11,8))
+ax.imshow(vis)
+
+perspective = gray.copy()
+
+# create the x and y coordinate arrays (here we just use pixel indices)
+xx, yy = np.mgrid[0:perspective.shape[0], 0:perspective.shape[1]]
+
+fig = plt.figure(figsize = (11,8))
+ax = Axes3D(fig, elev=70)
+ax.plot_surface(xx, yy, perspective ,rstride=1, cstride=1, cmap=plt.cm.gray, linewidth=0)
+
+from skimage import data, img_as_float
+from skimage import exposure
+
+def plot_img_and_hist(image, axes, bins=255):
+    """Plot an image along with its histogram and cumulative histogram.
+
+    """
+    image = img_as_float(image)
+    ax_img, ax_hist = axes
+    ax_cdf = ax_hist.twinx()
+
+    # Display image
+    ax_img.imshow(image, cmap=plt.cm.gray)
+    ax_img.set_axis_off()
+
+    # Display histogram
+    ax_hist.hist(image.ravel(),255,[1,254])
+    ax_hist.ticklabel_format(axis='y', style='scientific', scilimits=(0, 0))
+    ax_hist.set_xlabel('Pixel intensity')
+    ax_hist.set_xlim(0, 1)
+    ax_hist.set_yticks([])
+
+    # Display cumulative distribution
+    img_cdf, bins = exposure.cumulative_distribution(image, bins)
+    ax_cdf.plot(bins, img_cdf, 'r')
+    ax_cdf.set_yticks([])
+
+    return ax_img, ax_hist, ax_cdf
+
+
+# Load an example image
+img = gray.copy()
+
+# Contrast stretching
+p2, p98 = np.percentile(img, (2, 98))
+img_rescale = exposure.rescale_intensity(img, in_range=(p2, p98))
+
+# Equalization
+img_eq = exposure.equalize_hist(img)
+
+# Adaptive Equalization
+img_adapteq = exposure.equalize_adapthist(img, clip_limit=0.03)
+
+# Display results
+fig = plt.figure(figsize=(8, 5))
+axes = np.zeros((2, 4), dtype=np.object)
+axes[0, 0] = fig.add_subplot(2, 4, 1)
+for i in range(1, 4):
+    axes[0, i] = fig.add_subplot(2, 4, 1+i, sharex=axes[0,0], sharey=axes[0,0])
+for i in range(0, 4):
+    axes[1, i] = fig.add_subplot(2, 4, 5+i)
+
+ax_img, ax_hist, ax_cdf = plot_img_and_hist(img, axes[:, 0])
+ax_img.set_title('Low contrast image')
+
+y_min, y_max = ax_hist.get_ylim()
+ax_hist.set_ylabel('Number of pixels')
+ax_hist.set_yticks(np.linspace(0, y_max, 5))
+
+ax_img, ax_hist, ax_cdf = plot_img_and_hist(img_rescale, axes[:, 1])
+ax_img.set_title('Contrast stretching')
+
+ax_img, ax_hist, ax_cdf = plot_img_and_hist(img_eq, axes[:, 2])
+ax_img.set_title('Histogram equalization')
+
+ax_img, ax_hist, ax_cdf = plot_img_and_hist(img_adapteq, axes[:, 3])
+ax_img.set_title('Adaptive equalization')
+
+ax_cdf.set_ylabel('Fraction of total intensity')
+ax_cdf.set_yticks(np.linspace(0, 1, 5))
+
+# prevent overlap of y-axis labels
+fig.tight_layout()
+plt.show()
 
