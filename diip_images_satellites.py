@@ -25,6 +25,7 @@ import torch
 from mpl_toolkits.mplot3d import Axes3D
 from PIL import Image
 from skimage import measure, transform
+from scipy.ndimage import label
 
 import tarfile
 import string
@@ -78,24 +79,24 @@ def plotHistogram(img):
       plt.xlim([0,256])
   plt.show()
 
-global_contours = np.empty((10))
-global_contours
-
 deg = .125
 size1 = .0625
 
 ## LOOP
 start = 1
-end = 10
+end = 8
 
 # Dates
 day = 6
-image_type="LT"
+image_type="UT"
 year=2008
 month=5
 
 ## THRESH
-global_thresh = 30
+global_contours = []
+global_mser = []
+global_thresh = 40
+global_thresh_down = global_thresh - 5
 
 for i in range(start,end):
   if (i==0):
@@ -115,7 +116,6 @@ for i in range(start,end):
 
   #initialization
   colgrid = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
-  CA = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
 
   for year in range(2008,2009):
     for month in range(5,6):
@@ -161,10 +161,8 @@ for i in range(start,end):
 
             if len(col[mask]) != 0:
               median = np.mean(col[mask])
-              if (median >= global_thresh):
+              if (median >= global_thresh_down and median <= global_thresh):
                 colgrid[ilat,ilon] = median
-
-              #CA[ilat,ilon] = median
 
         # We mark the values at colgrid as invalid because they are maybe false positives or bad sampling
         colgrid = ma.masked_values(colgrid, 0.)
@@ -172,37 +170,161 @@ for i in range(start,end):
         v_x, v_y = np.meshgrid(lon_g, lat_g)
         gradx, grady = np.gradient(colgrid, edge_order=1)
 
-        ## Plot the original
-        fig1, (f1ax1) = plt.subplots(1, 1, figsize=(11,9))
-        f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='jet', vmin=colgrid.min(), vmax=colgrid.max())
-        #f1ax1.axis('off')
-        #fig1.savefig(DIR_TEST + image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png", pad_inches=1)
-        
-        ## Plot the 3D
-        #fig2 = plt.figure(figsize = (11,8))
-        #f2ax2 = Axes3D(fig2, elev=50)
-        #f2ax2.plot_surface(v_x, v_y, colgrid, cmap='jet',vmin=colgrid.min(), vmax=colgrid.max())
-        #fig2.savefig(image_type+"-surface-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
+        data = np.full((colgrid.shape[0], colgrid.shape[1]), colgrid, np.uint8)
+        img_bgr = cv2.cvtColor(data, cv2.COLOR_GRAY2BGR)
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        gray = cv2.normalize(gray, np.ones((lon_g.shape[0], lat_g.shape[0])) , 0, 255, cv2.NORM_MINMAX )
 
-        ##xi=np.linspace(colgrid.min(),colgrid.max(),10)
-        ##yi=np.linspace(colgrid.min(),colgrid.max(),10)
-        ##X,Y= np.meshgrid(xi,yi)
-        ##print(lon_g.shape,lat_g.shape)
-        ##Z = griddata(lon_g, lat_g, colgrid, (v_x, v_y),method='nearest')
-        ##plt.contourf(X,Y,Z)
+        kernel = np.ones((2,2),np.uint8)
+        closing = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel, iterations = 2)
+        gray = closing.copy()
 
-        #fig3, f3ax1 = plt.subplots(1, 1, figsize = (11,8))
-        #f3ax1.contourf(v_x, v_y, colgrid, colgrid.max(), cmap='jet')
-        #f3ax1.contour(v_x, v_y, colgrid, levels=5, colors = 'k', linewidths = 1, linestyles = 'solid' )
-        #f3ax1.quiver(v_x, v_y, gradx , grady)
-        #fig3.savefig(image_type+"-contour-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(iteration)+".png")
+        ## Below code convert image gradient in both x and y direction
+        image_laplacian = cv2.Laplacian(gray, cv2.CV_64F, ksize=1) 
+        image_laplacian = np.uint8(np.absolute(image_laplacian))
+        ## Below code convert image gradient in x direction
+        sobelx= cv2.Sobel(gray, 0, dx=1,dy=0)
+        sobelx= np.uint8(np.absolute(sobelx))
+        ## Below code convert image gradient in y direction
+        sobely= cv2.Sobel(gray, 0, dx=0,dy=1)
+        sobely = np.uint8(np.absolute(sobely))
+
+        image_contour = image_laplacian.copy()
+        edge = cv2.Canny(gray, colgrid.min(), colgrid.max())
+
+        contours, h = cv2.findContours(edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+        for c in contours:
+          hull = cv2.convexHull(c)
+          cv2.drawContours(image_contour, [hull], 0, (255,255, 255), 1)
+
+        global_contours.append(contours)
+
+        #Create MSER object
+        mser = cv2.MSER_create()
+        image_mser = image_laplacian.copy()
+
+        #detect regions in gray scale image
+        regions, bboxes = mser.detectRegions(gray)
+
+        global_mser.append(regions)
+
+        hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions]
+        isClosed = True
+        # Blue color in BGR 
+        color = (255, 0, 0) 
+          
+        # Line thickness of 2 px 
+        thickness = 1
+
+        cv2.polylines(image_mser, hulls,isClosed, color, thickness)
+
+        _, labels, _, _ = cv2.connectedComponentsWithStats(gray, connectivity=8, ltype=cv2.CV_32S) 
+
+        # Map component labels to hue val
+        label_hue = np.uint8(170 * labels/np.max(labels))
+        blank_ch = 255*np.ones_like(label_hue)
+        labeled_img = cv2.merge([label_hue, blank_ch, blank_ch])
+
+        # cvt to BGR for display
+        labeled_img = cv2.cvtColor(labeled_img, cv2.COLOR_HSV2BGR)
+
+        # set bg label to black
+        labeled_img[label_hue==0] = 0
+
+        fig, (ax0,ax1,ax2,ax3,ax4) = plt.subplots(1,5, figsize=(15,8))
+        ax0.imshow(gray, cmap="gray")
+        ax0.invert_yaxis()
+        ax1.imshow(image_laplacian, cmap="gray")
+        ax1.invert_yaxis()
+        ax2.imshow(image_contour)
+        ax2.invert_yaxis()
+        ax3.imshow(image_mser)
+        ax3.invert_yaxis()
+        ax4.imshow(labeled_img)
+        ax4.invert_yaxis()
 
   global_thresh -= 5
+  global_thresh_down -= 5
   print('end month')
+
+for i in range(start,end):
+  if (i==0):
+    continue
+
+  degree = 0.625 # deg * i
+  size = 0.3125 # (degree * size1) /  deg
+  thres=(i-20)
+  iteration=i
+  image_name = DIR_TEST + image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%day+"-i-0"+str(i)+".png"
+  # plot_sequence_images(degree = deg2, size = size2, thres=(i-20), iteration=i, image_type=image_type, day=day )
+
+  lat_g = np.arange(20.,50.,degree)
+  lon_g = np.arange(100.,150.,degree)
+
+  #initialization
+  colgrid = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
+  
+  for year in range(2008,2009):
+    for month in range(5,6):
+      ndays = calendar.mdays[month] + (month==2 and calendar.isleap(year))
+      print(year,month,ndays)
+
+      for dd in range (day,day+1):
+        
+        fname = DIR+'IASIdaily_'+str(year)+"%02d"%month+"%02d"%dd+'.nc'
+
+        #read IASI data in nc archive
+        if not(os.path.isfile(fname)):
+          continue
+
+        nc = netCDF4.Dataset(fname)
+        flg = nc.variables['flag'][:]
+        mask1 = (flg == 0)
+
+        lat = nc.variables['lat'][mask1]
+        lon = nc.variables['lon'][mask1]
+        col = nc.variables[image_type][mask1]
+        nc.close()
+      
+        print('end read nc')
+
+        mask2 = (np.isnan(col) == False) 
+
+        # gridding the data
+        for ilat in range(lat_g.shape[0]):
+          for ilon in range(lon_g.shape[0]):
+            # Grille régulier
+            # 25 km
+            # 0 25 degrée lattitude et longitude
+
+            # Grille regulier of 0.125 degree
+            maskgrid = (lat[:] >= (lat_g[ilat] - size)) & (lat[:] < (lat_g[ilat] + size)) & (lon[:] >= (lon_g[ilon] - size)) & (lon[:] < (lon_g[ilon] + size))
+            
+            # Defining invalid data
+            mask = mask2 & maskgrid
+
+            # Add a media filter for the grill regulier
+            isMask = (len(col[mask]) != 0) & (col[mask] >= thres).all()
+
+            if len(col[mask]) != 0:
+              median = np.mean(col[mask])
+              colgrid[ilat,ilon] = median
+
+        # We mark the values at colgrid as invalid because they are maybe false positives or bad sampling
+        colgrid = ma.masked_values(colgrid, 0.)
+
+        v_x, v_y = np.meshgrid(lon_g, lat_g)
+        gradx, grady = np.gradient(colgrid, edge_order=1)
+
+        # Plot the original
+        fig1, (f1ax1) = plt.subplots(1, 1, figsize=(11,9))
+        f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='jet', vmin=colgrid.min(), vmax=colgrid.max())
 
 print(v_x.shape, v_x.max())
 print(v_y.shape, v_y.max())
-print(colgrid.shape)
+print(colgrid.shape, "min:",colgrid.min(), "max:",colgrid.max(), np.mean(colgrid))
 
 #import numpy as np, cv2
 data = np.full((colgrid.shape[0], colgrid.shape[1]), colgrid, np.uint8)
@@ -210,8 +332,11 @@ img_bgr = cv2.cvtColor(data, cv2.COLOR_GRAY2BGR)
 gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 gray = cv2.normalize(gray, np.ones((lon_g.shape[0], lat_g.shape[0])) , 0, 255, cv2.NORM_MINMAX )
 
+gray2 = gray.copy()
+
 f1, ax1 = plt.subplots(1, 1, figsize=(11,8))
 ax1.imshow(gray , cmap="gray")
+ax1.invert_yaxis()
 
 def create_mask(image):
     #gray = cv2.cvtColor( image, cv2.COLOR_BGR2GRAY )
@@ -266,6 +391,20 @@ def fillhole(input_image, min_v=int(colgrid.min()), max_v=int(colgrid.max())):
     print("the size is", mask_image.shape)
 
     return mask_image
+
+def imshow_components(labels):
+    # Map component labels to hue val
+    label_hue = np.uint8(170 * labels/np.max(labels))
+    blank_ch = 255*np.ones_like(label_hue)
+    labeled_img = cv2.merge([label_hue, blank_ch, blank_ch])
+
+    # cvt to BGR for display
+    labeled_img = cv2.cvtColor(labeled_img, cv2.COLOR_HSV2BGR)
+
+    # set bg label to black
+    labeled_img[label_hue==0] = 0
+
+    plt.imshow(labeled_img)
 
 low_blue_rgb = np.uint8([[[ 255,0,0]]])  
 low_blue_hsv = cv2.cvtColor(low_blue_rgb,cv2.COLOR_RGB2HSV)
@@ -358,11 +497,19 @@ blurred_paint = cv2.inpaint(closing, mask, 3, cv2.INPAINT_TELEA)
 global_region = cv2.morphologyEx(blurred_paint, cv2.MORPH_OPEN, kernel, iterations = 1)
 
 gray = closing.copy()
+global_mask = mask.copy()
 
 f, (ax1,ax2,ax3) = plt.subplots(1, 3, figsize = (21,18))
-ax1.imshow(closing, cmap="jet")
+ax1.imshow(closing, cmap="gray")
+ax1.invert_yaxis()
 ax2.imshow(mask, cmap="gray")
+ax2.invert_yaxis()
 ax3.imshow(blurred_paint, cmap="jet")
+ax3.invert_yaxis()
+
+f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
+ax1.imshow(closing, cmap="gray")
+ax1.invert_yaxis()
 
 ## Below code convert image gradient in both x and y direction
 lap = cv2.Laplacian(gray, cv2.CV_64F, ksize=1) 
@@ -377,31 +524,82 @@ sobely = np.uint8(np.absolute(sobely))
 
 f, (ax,ax2) = plt.subplots(1,2, figsize=(11,8))
 ax.imshow(lap, cmap="gray")
+ax.invert_yaxis()
 ax2.imshow(canny, cmap="gray")
+ax2.invert_yaxis()
+
+global_contours_ar = np.array(global_contours, dtype=np.object)
+image_contour = lap.copy()
+
+i=0
+temp = lap.copy()
+for contours in global_contours_ar:
+  print(len(contours))
+  for c in contours:
+    hull = cv2.convexHull(c)
+    cv2.drawContours(temp, [hull], 0, (255,255, 255), 1)
+    fig, ax = plt.subplots(1, figsize=(12,8))
+    ax.imshow(temp)
+    ax.invert_yaxis()
+  i+=1
+  break
+#fig, ax = plt.subplots(1, figsize=(12,8))
+#ax.imshow(image_contour)
+#ax.invert_yaxis()
+
+global_mser_ar = np.array(global_mser, dtype=np.object)
+image_contour = lap.copy()
+
+i=0
+temp = lap.copy()
+for contours in global_mser_ar:
+  print(len(contours))
+  for c in contours:
+    hull = cv2.convexHull(c)
+    cv2.drawContours(temp, [hull], 0, (255,255, 255), 1)
+    fig, ax = plt.subplots(1, figsize=(12,8))
+    ax.imshow(temp)
+    ax.invert_yaxis()
+  i+=1
+  break
+
+#_hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in global_contours[0]]
+
+
+
+data = np.array(global_contours[0][0])
+length = data.shape[0]
+width = data.shape[1]
+x = np.meshgrid(np.arange(length))
+#print((i for i in global_contours[0][0]))
 
 # Contours
 
-image = gray.copy()
+image = lap.copy()
 edge = canny.copy()
 # 1
-#contours = cv2.findContours(canny, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+#contours = cv2.findContours(edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 #cv2.drawContours(image, contours[0], -1, (255,0,0), thickness = 1)
 
 ## 2
-#contours, h = cv2.findContours(edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-#contours = sorted(contours, key=cv2.contourArea, reverse=True)
-#cv2.drawContours(image, contours[0], -1, (255,0,0), thickness = 1)
+contours, h = cv2.findContours(edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+print(contours[0])
+
+contours = sorted(contours, key=cv2.contourArea, reverse=True)
+cv2.drawContours(image, contours[0], -1, (255,0,0), thickness = 1)
 
 ## 3
-contours, h = cv2.findContours(edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-contours = sorted(contours, key=cv2.contourArea, reverse=True)
+#contours, h = cv2.findContours(edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+#contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
-for c in contours:
-    hull = cv2.convexHull(c)
-    cv2.drawContours(image, [hull], 0, (255,255, 255), 1)
+#for c in contours:
+#    hull = cv2.convexHull(c)
+#    cv2.drawContours(image, [hull], 0, (255,255, 255), 1)
 
 fig, ax = plt.subplots(1, figsize=(12,8))
-plt.imshow(image, cmap="jet")
+ax.imshow(image)
+ax.invert_yaxis()
 
 #Create MSER object
 mser = cv2.MSER_create()
@@ -410,24 +608,48 @@ vis = lap.copy()
 #detect regions in gray scale image
 regions, bboxes = mser.detectRegions(gray)
 
-print(type(regions), type(bboxes), bboxes.shape)
+regions = sorted(regions, key=cv2.contourArea, reverse=True)
 
-hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions]
+print("regions", len(regions), regions[2][0])
 
-#cv2.polylines(vis, hulls, 5, (255, 0, 0),1)
+i = 0
+for c in regions:
+  temp = lap.copy()
+  print(i)
+  hull = cv2.convexHull(c)
+  cv2.drawContours(temp, [hull], 0, (255,255, 255), 1)
+  f, ax = plt.subplots(1, 1, figsize=(11,8))
+  ax.imshow(temp)
+  ax.invert_yaxis()
+  #f.savefig(DIR_TEST + image_type+"-mser-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(i)+".png", pad_inches=1)
+  i+=1
+  #if i == 3:
+  break
 
-isClosed = True
+#hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions]
+#isClosed = True  
+## Blue color in BGR 
+#color = (255, 0, 0) 
+## Line thickness of 2 px 
+#thickness = 1
+#cv2.polylines(vis, hulls,isClosed, color, thickness) 
+#f, ax = plt.subplots(1, 1, figsize=(11,8))
+#ax.imshow(vis)
+#ax.invert_yaxis()
+
+def most_frequent(List): 
+    counter = 0
+    num = List[0] 
+      
+    for i in List: 
+        curr_frequency = List.count(i) 
+        if(curr_frequency> counter): 
+            counter = curr_frequency 
+            num = i 
   
-# Blue color in BGR 
-color = (255, 0, 0) 
-  
-# Line thickness of 2 px 
-thickness = 1
+    return num
 
-cv2.polylines(vis, hulls,isClosed, color, thickness) 
-
-f, ax = plt.subplots(1, 1, figsize=(11,8))
-ax.imshow(vis)
+plt.plot(regions[0])
 
 connect = cv2.connectedComponentsWithStats(gray, connectivity=8, ltype=cv2.CV_32S) 
 
@@ -444,20 +666,6 @@ print("num_labels", num_labels)
 
 plt.imshow(labels)
 
-def imshow_components(labels):
-    # Map component labels to hue val
-    label_hue = np.uint8(170 * labels/np.max(labels))
-    blank_ch = 255*np.ones_like(label_hue)
-    labeled_img = cv2.merge([label_hue, blank_ch, blank_ch])
-
-    # cvt to BGR for display
-    labeled_img = cv2.cvtColor(labeled_img, cv2.COLOR_HSV2BGR)
-
-    # set bg label to black
-    labeled_img[label_hue==0] = 0
-
-    plt.imshow(labeled_img)
-
 imshow_components(labels)
 
 perspective = lap.copy()
@@ -466,6 +674,40 @@ perspective = lap.copy()
 xx, yy = np.mgrid[0:perspective.shape[0], 0:perspective.shape[1]]
 
 fig = plt.figure(figsize = (11,8))
-ax = Axes3D(fig, elev=70)
+ax = Axes3D(fig, elev=80, azim=20)
 ax.plot_surface(xx, yy, perspective ,rstride=1, cstride=1, cmap='gray', linewidth=0)
+ax.invert_yaxis()
+
+def segment_on_dt(a, img):
+    border = cv2.dilate(img, None, iterations=5)
+    border = border - cv2.erode(border, None)
+
+    dt = cv2.distanceTransform(img, 2, 3)
+    dt = ((dt - dt.min()) / (dt.max() - dt.min()) * 255).astype(np.uint8)
+    _, dt = cv2.threshold(dt, 180, 255, cv2.THRESH_BINARY)
+    lbl, ncc = label(dt)
+    lbl = lbl * (255 / (ncc + 1))
+    # Completing the markers now. 
+    lbl[border == 255] = 255
+
+    lbl = np.int32(lbl)
+    cv2.watershed(a, lbl)
+
+    lbl[lbl == -1] = 0
+    lbl = lbl.astype(np.uint8)
+    return 255 - lbl
+
+# Pre-processing.
+img_gray = gray.copy()
+
+img_bgr_2 = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+_, img_bin = cv2.threshold(img_gray, 0, 255, cv2.THRESH_OTSU)
+img_bin = cv2.morphologyEx(img_bin, cv2.MORPH_OPEN, np.ones((3, 3), dtype=int))
+
+result = segment_on_dt(img_bgr, img_bin)
+
+f, ax = plt.subplots(1, 1, figsize=(11,8))
+ax.imshow(result, cmap="gray")
+ax.invert_yaxis()
 
