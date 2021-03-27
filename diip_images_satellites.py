@@ -233,7 +233,7 @@ for i in range(start,end):
         # set bg label to black
         labeled_img[label_hue==0] = 0
 
-        fig, (ax0,ax1,ax2,ax3,ax4) = plt.subplots(1,5, figsize=(15,8))
+        fig, (ax0,ax1,ax2,ax3,ax4) = plt.subplots(1,5, figsize=(21,15))
         ax0.imshow(gray, cmap="gray")
         ax0.invert_yaxis()
         ax1.imshow(image_laplacian, cmap="gray")
@@ -329,13 +329,13 @@ print(colgrid.shape, "min:",colgrid.min(), "max:",colgrid.max(), np.mean(colgrid
 #import numpy as np, cv2
 data = np.full((colgrid.shape[0], colgrid.shape[1]), colgrid, np.uint8)
 img_bgr = cv2.cvtColor(data, cv2.COLOR_GRAY2BGR)
-gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-gray = cv2.normalize(gray, np.ones((lon_g.shape[0], lat_g.shape[0])) , 0, 255, cv2.NORM_MINMAX )
+init_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+init_gray = cv2.normalize(init_gray, np.ones((lon_g.shape[0], lat_g.shape[0])) , 0, 255, cv2.NORM_MINMAX )
 
-gray2 = gray.copy()
+gray2 = init_gray.copy()
 
 f1, ax1 = plt.subplots(1, 1, figsize=(11,8))
-ax1.imshow(gray , cmap="gray")
+ax1.imshow(init_gray , cmap="gray")
 ax1.invert_yaxis()
 
 def create_mask(image):
@@ -486,44 +486,155 @@ def Diffusion(im, steps, b, method=phi_1, l=0.25):
 
 kernel = np.ones((2,2),np.uint8)
 
+gray = init_gray.copy()
+
 #opening = cv2.morphologyEx(gray, cv2.MORPH_OPEN, kernel, iterations = 1)
 closing = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel, iterations = 2)
 #blurred = cv2.GaussianBlur( opening, (3,3), 0 )
 
+mask_file = cv2.imread("mask_2.jpg", cv2.IMREAD_GRAYSCALE)
+
 mask = fillhole(closing)
 mask = cv2.erode( mask, None, iterations=1 )
 
-blurred_paint = cv2.inpaint(closing, mask, 3, cv2.INPAINT_TELEA)
-global_region = cv2.morphologyEx(blurred_paint, cv2.MORPH_OPEN, kernel, iterations = 1)
+_, bin_gray = cv2.threshold(gray, 0, 255, cv2.THRESH_OTSU)
+bin_gray = cv2.morphologyEx(bin_gray, cv2.MORPH_DILATE, np.ones((6, 6), dtype=int))
 
-gray = closing.copy()
+blurred_paint = cv2.inpaint(closing, mask_file, 6, cv2.INPAINT_TELEA)
+
+gray = blurred_paint.copy()
 global_mask = mask.copy()
 
 f, (ax1,ax2,ax3) = plt.subplots(1, 3, figsize = (21,18))
 ax1.imshow(closing, cmap="gray")
 ax1.invert_yaxis()
-ax2.imshow(mask, cmap="gray")
+ax2.imshow(mask_file, cmap="gray")
 ax2.invert_yaxis()
-ax3.imshow(blurred_paint, cmap="jet")
+ax3.imshow(blurred_paint, cmap="gray")
 ax3.invert_yaxis()
 
+cc = closing.copy()
+cc = cv2.morphologyEx(cc, cv2.MORPH_CLOSE, kernel, iterations = 4)
+
 f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
-ax1.imshow(closing, cmap="gray")
+ax1.imshow(cc, cmap="gray")
+ax1.invert_yaxis()
+
+image_dist = gray.copy()
+
+dist = cv2.distanceTransform(image_dist, cv2.DIST_L2, 3)
+# Normalize the distance image for range = {0.0, 1.0}
+# so we can visualize and threshold it
+cv2.normalize(dist, dist, 0, 255, cv2.NORM_MINMAX)
+
+_data = np.full(colgrid.shape, dist, np.uint8)
+
+lap_dist = cv2.Laplacian(_data, cv2.CV_64F, ksize=1)
+lap_dist = np.uint8(np.absolute(lap_dist))
+
+f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
+ax1.imshow(lap_dist, cmap="gray")
+ax1.invert_yaxis()
+#f.savefig("gray-image-test2.png", pad_inches=1)
+
+#s_mask_file = gray.copy()
+s_mask_file = cv2.imread("mask_5.jpg" , cv2.IMREAD_GRAYSCALE)
+ht, wd = s_mask_file.shape
+
+temp = np.zeros([ s_mask_file.shape[0] + 2 , s_mask_file.shape[1] + 2], np.uint8)
+height , width = temp.shape
+
+final = np.zeros(temp.shape, np.uint8)
+
+# compute center offset
+xx = (width - wd) // 2
+yy = (height - ht) // 2
+
+# copy img image into center of result image
+temp[yy:yy+ht, xx:xx+wd] = s_mask_file
+
+temp = temp.astype(np.int16)
+
+regions = []
+limit = 5
+i = 0
+for row in range(height - 1):
+  j = 0
+  for col in range(width - 1):
+    current = temp[i][j]
+    left = temp[i][j - 1]
+    right = temp[i][j + 1]
+    top = temp[i - 1][j]
+    bottom = temp[i + 1][j]
+
+    if current != 0:
+      inLeft = np.absolute(np.subtract(current, left)) < limit
+      inRight = np.absolute(np.subtract(current, right)) < limit
+      inTop = np.absolute(np.subtract(current, top)) < limit
+      inBottom = np.absolute(np.subtract(current, bottom)) < limit
+
+      myreg = []
+
+      #if inRight or inBottom or inLeft or inTop:
+      #  final[i,j] = current  
+      #  myreg.append(final[i,j])
+
+      if inRight:
+        final[i,j] = current
+        myreg.append([current,right])
+      elif inLeft:
+        final[i,j] = current
+        myreg.append([current,left])
+      elif inBottom:
+        final[i,j] = current
+        myreg.append([current,bottom])
+      elif inTop:
+        final[i,j] = current
+        myreg.append([current,top])
+      elif inBottom:
+        final[i,j] = current
+        myreg.append([current,bottom])
+
+      regions.append(myreg) 
+
+    j += 1
+  i += 1
+
+print(final)
+print("--------------------------")
+print(regions)
+
+f, (ax1,ax2) = plt.subplots(1, 2, figsize = (21,18))
+ax1.imshow(temp, cmap="gray")
+ax2.imshow(final, cmap="gray")
+#ax1.invert_yaxis()
+
+
+
+dist = cv2.distanceTransform(s_mask_file, cv2.DIST_L2, 3)
+# Normalize the distance image for range = {0.0, 1.0}
+# so we can visualize and threshold it
+#cv2.normalize(dist, dist, 0, 1.0, cv2.NORM_MINMAX)
+
+print(dist)
+
+f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
+ax1.imshow(dist, cmap="gray")
 ax1.invert_yaxis()
 
 ## Below code convert image gradient in both x and y direction
-lap = cv2.Laplacian(gray, cv2.CV_64F, ksize=1) 
+lap = cv2.Laplacian(gray, cv2.CV_16S, ksize=1)
 lap = np.uint8(np.absolute(lap))
 ## Below code convert image gradient in x direction
 canny = cv2.Canny(gray, colgrid.min(), colgrid.max())
-sobelx= cv2.Sobel(gray, 0, dx=1,dy=0)
-sobelx= np.uint8(np.absolute(sobelx))
+sobelx = cv2.Sobel(gray, 0, dx=1,dy=0)
+sobelx = np.uint8(np.absolute(sobelx))
 ## Below code convert image gradient in y direction
-sobely= cv2.Sobel(gray, 0, dx=0,dy=1)
+sobely = cv2.Sobel(gray, 0, dx=0,dy=1)
 sobely = np.uint8(np.absolute(sobely))
 
 f, (ax,ax2) = plt.subplots(1,2, figsize=(11,8))
-ax.imshow(lap, cmap="gray")
+ax.imshow(sobely, cmap="gray")
 ax.invert_yaxis()
 ax2.imshow(canny, cmap="gray")
 ax2.invert_yaxis()
@@ -562,16 +673,6 @@ for contours in global_mser_ar:
     ax.invert_yaxis()
   i+=1
   break
-
-#_hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in global_contours[0]]
-
-
-
-data = np.array(global_contours[0][0])
-length = data.shape[0]
-width = data.shape[1]
-x = np.meshgrid(np.arange(length))
-#print((i for i in global_contours[0][0]))
 
 # Contours
 
@@ -668,14 +769,14 @@ plt.imshow(labels)
 
 imshow_components(labels)
 
-perspective = lap.copy()
+perspective = cc.copy()
 
 # create the x and y coordinate arrays (here we just use pixel indices)
 xx, yy = np.mgrid[0:perspective.shape[0], 0:perspective.shape[1]]
 
 fig = plt.figure(figsize = (11,8))
-ax = Axes3D(fig, elev=80, azim=20)
-ax.plot_surface(xx, yy, perspective ,rstride=1, cstride=1, cmap='gray', linewidth=0)
+ax = Axes3D(fig, elev=30, azim=20)
+ax.plot_surface(xx, yy, perspective ,rstride=1, cstride=1, cmap='jet', linewidth=0)
 ax.invert_yaxis()
 
 def segment_on_dt(a, img):
