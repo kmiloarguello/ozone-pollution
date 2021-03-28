@@ -102,13 +102,10 @@ for i in range(start,end):
   if (i==0):
     continue
 
-  print("Threshold", global_thresh)
-
-  degree = 0.625 # deg * i
-  size = 0.3125 # (degree * size1) /  deg
-  thres=(i-20)
+  degree = 0.625 #1.25 # deg * i
+  size = .3125 #0.625 # (degree * size1) /  deg
   iteration=i
-  image_name = DIR_TEST + image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%day+"-i-0"+str(i)+".png"
+  #image_name = DIR_TEST + image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%day+"-i-0"+str(i)+".png"
   # plot_sequence_images(degree = deg2, size = size2, thres=(i-20), iteration=i, image_type=image_type, day=day )
 
   lat_g = np.arange(20.,50.,degree)
@@ -116,6 +113,7 @@ for i in range(start,end):
 
   #initialization
   colgrid = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
+  image_data = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
 
   for year in range(2008,2009):
     for month in range(5,6):
@@ -138,6 +136,12 @@ for i in range(start,end):
         lon = nc.variables['lon'][mask1]
         col = nc.variables[image_type][mask1]
         nc.close()
+
+        if global_thresh < int(col.max() - 5) and global_thresh_condition == False:
+          global_thresh = int(col.max() -5)
+          global_thresh_condition = True
+                              
+        print("Threshold", global_thresh)
       
         print('end read nc')
 
@@ -161,27 +165,69 @@ for i in range(start,end):
 
             if len(col[mask]) != 0:
               median = np.mean(col[mask])
-              if (median >= global_thresh_down and median <= global_thresh):
-                colgrid[ilat,ilon] = median
+              #if (median <= global_thresh):
+              #if (median >= global_thresh_down and median <= global_thresh):
+              colgrid[ilat,ilon] = median
+              image_data[ilat, ilon] = median
+              
 
         # We mark the values at colgrid as invalid because they are maybe false positives or bad sampling
-        colgrid = ma.masked_values(colgrid, 0.)
+        #colgrid = ma.masked_values(colgrid, 0.)
 
         v_x, v_y = np.meshgrid(lon_g, lat_g)
+        bigger_points = ndimage.grey_dilation(colgrid, size=(10, 10), structure=np.ones((10, 10)))
+
+        ## Por la imagen inicial llena los campos negros y llena la informacion
+        ## por el resto, no debe llenar los campos negros
+
+        for ilat in range(lat_g.shape[0]):
+          for ilon in range(lon_g.shape[0]):
+            # iteration 0
+            if colgrid[ilat,ilon] == 0:
+              colgrid[ilat,ilon] = bigger_points[ilat, ilon]
+
         gradx, grady = np.gradient(colgrid, edge_order=1)
+
+        # Plot the original
+        #fig1, (f1ax1) = plt.subplots(1, 1, figsize=(11,9))
+        #f1ax1.pcolormesh(v_x, v_y, image_data, shading='nearest',cmap='jet', vmin=colgrid.min(), vmax=colgrid.max())
 
         data = np.full((colgrid.shape[0], colgrid.shape[1]), colgrid, np.uint8)
         img_bgr = cv2.cvtColor(data, cv2.COLOR_GRAY2BGR)
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        gray = cv2.normalize(gray, np.ones((lon_g.shape[0], lat_g.shape[0])) , 0, 255, cv2.NORM_MINMAX )
 
-        kernel = np.ones((2,2),np.uint8)
-        closing = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel, iterations = 2)
-        gray = closing.copy()
+        scale_percent = 200 # percent of original size
+        width = int(gray.shape[1] * scale_percent / 100)
+        height = int(gray.shape[0] * scale_percent / 100)
+        dim = (width, height)
+
+        # resize image
+        gray = cv2.resize(gray, dim, interpolation = cv2.INTER_AREA)
+        #gray = cv2.normalize(gray, np.ones((lon_g.shape[0], lat_g.shape[0])) , 0, 255, cv2.NORM_MINMAX )
+
+        kernel = np.ones((3,3),np.uint8)
+        closing = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel, iterations = 3)
+        close_img = closing.copy()
+
+        print("global-mean", np.mean(colgrid))
+        print("diference", np.absolute(global_thresh - np.mean(colgrid) ))
+        #if ( np.absolute(global_thresh - np.mean(colgrid) ) )
+        
+        #mask_path_img = DIR_TEST + 'test_image_ps3.jpg'
+        ##mask_path_img = 'mask_2.jpg'
+        #mask_file = cv2.imread(mask_path_img, cv2.IMREAD_GRAYSCALE)
+        #mask_file = cv2.resize(mask_file, dim, interpolation = cv2.INTER_AREA)
+        #impaintint = cv2.inpaint(close_img, mask_file, 6, cv2.INPAINT_TELEA)
+        gray = close_img.copy()
+
+        #big_gray = cv2.imread(DIR_TEST + 'test_image_ps1.jpg', cv2.IMREAD_GRAYSCALE)
+        #big_gray = cv2.resize(_cami_, (80,48), interpolation = cv2.INTER_AREA)
+        #gray = big_gray.copy()
 
         ## Below code convert image gradient in both x and y direction
-        image_laplacian = cv2.Laplacian(gray, cv2.CV_64F, ksize=1) 
+        image_laplacian = cv2.Laplacian(gray, cv2.CV_16U, ksize=3) 
         image_laplacian = np.uint8(np.absolute(image_laplacian))
+        global_laplacian.append(image_laplacian)
         ## Below code convert image gradient in x direction
         sobelx= cv2.Sobel(gray, 0, dx=1,dy=0)
         sobelx= np.uint8(np.absolute(sobelx))
@@ -206,7 +252,7 @@ for i in range(start,end):
         image_mser = image_laplacian.copy()
 
         #detect regions in gray scale image
-        regions, bboxes = mser.detectRegions(gray)
+        regions, bboxes = mser.detectRegions(image_laplacian)
 
         global_mser.append(regions)
 
@@ -233,7 +279,7 @@ for i in range(start,end):
         # set bg label to black
         labeled_img[label_hue==0] = 0
 
-        fig, (ax0,ax1,ax2,ax3,ax4) = plt.subplots(1,5, figsize=(21,15))
+        fig, (ax0,ax1,ax2,ax3) = plt.subplots(1,4, figsize=(21,15))
         ax0.imshow(gray, cmap="gray")
         ax0.invert_yaxis()
         ax1.imshow(image_laplacian, cmap="gray")
@@ -242,12 +288,11 @@ for i in range(start,end):
         ax2.invert_yaxis()
         ax3.imshow(image_mser)
         ax3.invert_yaxis()
-        ax4.imshow(labeled_img)
-        ax4.invert_yaxis()
-
+        
   global_thresh -= 5
   global_thresh_down -= 5
   print('end month')
+
 
 for i in range(start,end):
   if (i==0):
