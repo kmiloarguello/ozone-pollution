@@ -26,6 +26,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from PIL import Image
 from skimage import measure, transform
 from scipy.ndimage import label
+from scipy import ndimage
 
 import tarfile
 import string
@@ -84,28 +85,33 @@ size1 = .0625
 
 ## LOOP
 start = 1
-end = 8
+end = 10
 
 # Dates
 day = 6
-image_type="UT"
+image_type="LT"
 year=2008
 month=5
 
 ## THRESH
 global_contours = []
 global_mser = []
-global_thresh = 40
+global_laplacian = []
+global_thresh = 50
 global_thresh_down = global_thresh - 5
+global_thresh_condition = False
 
 for i in range(start,end):
   if (i==0):
     continue
 
-  degree = 0.625 #1.25 # deg * i
-  size = .3125 #0.625 # (degree * size1) /  deg
+  print("Threshold", global_thresh)
+
+  degree = 0.625 # deg * i
+  size = 0.3125 # (degree * size1) /  deg
+  thres=(i-20)
   iteration=i
-  #image_name = DIR_TEST + image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%day+"-i-0"+str(i)+".png"
+  image_name = DIR_TEST + image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%day+"-i-0"+str(i)+".png"
   # plot_sequence_images(degree = deg2, size = size2, thres=(i-20), iteration=i, image_type=image_type, day=day )
 
   lat_g = np.arange(20.,50.,degree)
@@ -113,7 +119,6 @@ for i in range(start,end):
 
   #initialization
   colgrid = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
-  image_data = np.zeros([lat_g.shape[0],lon_g.shape[0]], np.uint8)
 
   for year in range(2008,2009):
     for month in range(5,6):
@@ -137,11 +142,10 @@ for i in range(start,end):
         col = nc.variables[image_type][mask1]
         nc.close()
 
+        print("Col",int(col.max() - 5))
         if global_thresh < int(col.max() - 5) and global_thresh_condition == False:
           global_thresh = int(col.max() -5)
           global_thresh_condition = True
-                              
-        print("Threshold", global_thresh)
       
         print('end read nc')
 
@@ -165,67 +169,58 @@ for i in range(start,end):
 
             if len(col[mask]) != 0:
               median = np.mean(col[mask])
-              #if (median <= global_thresh):
               #if (median >= global_thresh_down and median <= global_thresh):
-              colgrid[ilat,ilon] = median
-              image_data[ilat, ilon] = median
-              
+              if median >= global_thresh:
+                colgrid[ilat,ilon] = median
 
         # We mark the values at colgrid as invalid because they are maybe false positives or bad sampling
         #colgrid = ma.masked_values(colgrid, 0.)
-
-        v_x, v_y = np.meshgrid(lon_g, lat_g)
         bigger_points = ndimage.grey_dilation(colgrid, size=(10, 10), structure=np.ones((10, 10)))
 
-        ## Por la imagen inicial llena los campos negros y llena la informacion
-        ## por el resto, no debe llenar los campos negros
-
+        """
         for ilat in range(lat_g.shape[0]):
           for ilon in range(lon_g.shape[0]):
             # iteration 0
             if colgrid[ilat,ilon] == 0:
-              colgrid[ilat,ilon] = bigger_points[ilat, ilon]
+              colgrid[ilat,ilon] = np.mean(colgrid)
+              #colgrid[ilat,ilon] = bigger_points[ilat, ilon]
+        """
 
+        v_x, v_y = np.meshgrid(lon_g, lat_g)
         gradx, grady = np.gradient(colgrid, edge_order=1)
-
-        # Plot the original
-        #fig1, (f1ax1) = plt.subplots(1, 1, figsize=(11,9))
-        #f1ax1.pcolormesh(v_x, v_y, image_data, shading='nearest',cmap='jet', vmin=colgrid.min(), vmax=colgrid.max())
 
         data = np.full((colgrid.shape[0], colgrid.shape[1]), colgrid, np.uint8)
         img_bgr = cv2.cvtColor(data, cv2.COLOR_GRAY2BGR)
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        #gray = cv2.normalize(gray, np.ones((lon_g.shape[0], lat_g.shape[0])) , 0, 255, cv2.NORM_MINMAX )
 
         scale_percent = 200 # percent of original size
         width = int(gray.shape[1] * scale_percent / 100)
         height = int(gray.shape[0] * scale_percent / 100)
         dim = (width, height)
-
-        # resize image
         gray = cv2.resize(gray, dim, interpolation = cv2.INTER_AREA)
-        #gray = cv2.normalize(gray, np.ones((lon_g.shape[0], lat_g.shape[0])) , 0, 255, cv2.NORM_MINMAX )
 
         kernel = np.ones((3,3),np.uint8)
         closing = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel, iterations = 3)
-        close_img = closing.copy()
+        image_close = closing.copy()
 
-        print("global-mean", np.mean(colgrid))
-        print("diference", np.absolute(global_thresh - np.mean(colgrid) ))
-        #if ( np.absolute(global_thresh - np.mean(colgrid) ) )
-        
+        image_large_close = cv2.morphologyEx(closing, cv2.MORPH_CLOSE, np.ones((9,9),np.uint8), iterations = 3)
+        _, image_large_close_mask = cv2.threshold(image_large_close, 1, 255, cv2.THRESH_OTSU)
+        image_large_close_mask_inv = cv2.bitwise_not(image_large_close_mask)
+        img1_bg = cv2.bitwise_and(image_close,image_close,mask = image_large_close_mask_inv)
+
+        image_mix = cv2.add(closing,image_large_close) # cv2.addWeighted(image_close,1,image_large_close,.1,0)
+
         #mask_path_img = DIR_TEST + 'test_image_ps3.jpg'
         ##mask_path_img = 'mask_2.jpg'
         #mask_file = cv2.imread(mask_path_img, cv2.IMREAD_GRAYSCALE)
         #mask_file = cv2.resize(mask_file, dim, interpolation = cv2.INTER_AREA)
-        #impaintint = cv2.inpaint(close_img, mask_file, 6, cv2.INPAINT_TELEA)
-        gray = close_img.copy()
+        #impaintint = cv2.inpaint(image_close, mask_file, 6, cv2.INPAINT_TELEA)
 
-        #big_gray = cv2.imread(DIR_TEST + 'test_image_ps1.jpg', cv2.IMREAD_GRAYSCALE)
-        #big_gray = cv2.resize(_cami_, (80,48), interpolation = cv2.INTER_AREA)
-        #gray = big_gray.copy()
+        gray = image_large_close.copy()
 
         ## Below code convert image gradient in both x and y direction
-        image_laplacian = cv2.Laplacian(gray, cv2.CV_16U, ksize=3) 
+        image_laplacian = cv2.Laplacian(gray, cv2.CV_64F, ksize=1) 
         image_laplacian = np.uint8(np.absolute(image_laplacian))
         global_laplacian.append(image_laplacian)
         ## Below code convert image gradient in x direction
@@ -266,7 +261,7 @@ for i in range(start,end):
 
         cv2.polylines(image_mser, hulls,isClosed, color, thickness)
 
-        _, labels, _, _ = cv2.connectedComponentsWithStats(gray, connectivity=8, ltype=cv2.CV_32S) 
+        _, labels, _, _ = cv2.connectedComponentsWithStats(image_laplacian, connectivity=8, ltype=cv2.CV_32S) 
 
         # Map component labels to hue val
         label_hue = np.uint8(170 * labels/np.max(labels))
@@ -280,26 +275,29 @@ for i in range(start,end):
         labeled_img[label_hue==0] = 0
 
         fig, (ax0,ax1,ax2,ax3) = plt.subplots(1,4, figsize=(21,15))
-        ax0.imshow(gray, cmap="gray")
+        ax0.imshow(image_close, cmap="gray")
         ax0.invert_yaxis()
-        ax1.imshow(image_laplacian, cmap="gray")
+        ax1.imshow(image_large_close, cmap="gray")
         ax1.invert_yaxis()
-        ax2.imshow(image_contour)
+        ax2.imshow(img1_bg, cmap="gray")
         ax2.invert_yaxis()
         ax3.imshow(image_mser)
         ax3.invert_yaxis()
-        
+
   global_thresh -= 5
   global_thresh_down -= 5
   print('end month')
 
+_deg = .125
+_size = .0625
 
-for i in range(start,end):
+for i in range(10,11):
   if (i==0):
     continue
 
-  degree = 0.625 # deg * i
-  size = 0.3125 # (degree * size1) /  deg
+  degree = _deg * i  # 0.625 
+  size = (degree * _size) /  _deg  # 0.3125
+  print("degree", degree, "size", size)
   thres=(i-20)
   iteration=i
   image_name = DIR_TEST + image_type+"-mesh-"+str(year)+"%02d"%month+"%02d"%day+"-i-0"+str(i)+".png"
@@ -358,14 +356,16 @@ for i in range(start,end):
               colgrid[ilat,ilon] = median
 
         # We mark the values at colgrid as invalid because they are maybe false positives or bad sampling
-        colgrid = ma.masked_values(colgrid, 0.)
+        #colgrid = ma.masked_values(colgrid, 0.)
 
         v_x, v_y = np.meshgrid(lon_g, lat_g)
         gradx, grady = np.gradient(colgrid, edge_order=1)
 
+        bigger_points = ndimage.grey_dilation(colgrid, size=(3, 3), structure=np.ones((3, 3)))
+        
         # Plot the original
         fig1, (f1ax1) = plt.subplots(1, 1, figsize=(11,9))
-        f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='jet', vmin=colgrid.min(), vmax=colgrid.max())
+        f1ax1.pcolormesh(v_x, v_y, bigger_points, shading='nearest',cmap='gray', vmin=colgrid.min(), vmax=colgrid.max())
 
 print(v_x.shape, v_x.max())
 print(v_y.shape, v_y.max())
@@ -537,10 +537,14 @@ gray = init_gray.copy()
 closing = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel, iterations = 2)
 #blurred = cv2.GaussianBlur( opening, (3,3), 0 )
 
-mask_file = cv2.imread("mask_2.jpg", cv2.IMREAD_GRAYSCALE)
+mask_path_img = DIR_TEST + 'test_image_ps3.jpg'
+#mask_path_img = 'mask_2.jpg"'
 
-mask = fillhole(closing)
-mask = cv2.erode( mask, None, iterations=1 )
+mask_file = cv2.imread(mask_path_img, cv2.IMREAD_GRAYSCALE)
+mask_file = cv2.resize(mask_file, (closing.shape[1],closing.shape[0]), interpolation = cv2.INTER_AREA)
+
+#mask = fillhole(closing)
+#mask = cv2.erode( mask, None, iterations=1 )
 
 _, bin_gray = cv2.threshold(gray, 0, 255, cv2.THRESH_OTSU)
 bin_gray = cv2.morphologyEx(bin_gray, cv2.MORPH_DILATE, np.ones((6, 6), dtype=int))
@@ -555,35 +559,107 @@ ax1.imshow(closing, cmap="gray")
 ax1.invert_yaxis()
 ax2.imshow(mask_file, cmap="gray")
 ax2.invert_yaxis()
-ax3.imshow(blurred_paint, cmap="gray")
+ax3.imshow(gray, cmap="gray")
 ax3.invert_yaxis()
 
-cc = closing.copy()
-cc = cv2.morphologyEx(cc, cv2.MORPH_CLOSE, kernel, iterations = 4)
-
+test_g = blurred_paint.copy()
+_,thr = cv2.threshold(test_g,1,255,cv2.THRESH_BINARY)
+print(closing.shape)
 f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
-ax1.imshow(cc, cmap="gray")
+ax1.imshow(closing, cmap="gray")
+ax1.axis('off')
 ax1.invert_yaxis()
 
-image_dist = gray.copy()
+ps_image = cv2.imread(DIR_TEST + 'test_image_ps1.jpg' , cv2.IMREAD_GRAYSCALE)
+f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
+ax1.imshow(ps_image, cmap="gray")
+#ax1.invert_yaxis()
 
-dist = cv2.distanceTransform(image_dist, cv2.DIST_L2, 3)
-# Normalize the distance image for range = {0.0, 1.0}
-# so we can visualize and threshold it
-cv2.normalize(dist, dist, 0, 255, cv2.NORM_MINMAX)
+image_dist = cv2.imread(DIR_TEST + 'test_image_ps1.jpg', cv2.IMREAD_GRAYSCALE)
+image_dist = cv2.resize(image_dist, (80,48), interpolation = cv2.INTER_AREA)
 
-_data = np.full(colgrid.shape, dist, np.uint8)
+#image_dist = _cami_.copy()
 
-lap_dist = cv2.Laplacian(_data, cv2.CV_64F, ksize=1)
+lap_dist = cv2.Laplacian(src=image_dist, ddepth=cv2.CV_8U, ksize=1)
 lap_dist = np.uint8(np.absolute(lap_dist))
+
+print(image_dist.shape)
 
 f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
 ax1.imshow(lap_dist, cmap="gray")
 ax1.invert_yaxis()
 #f.savefig("gray-image-test2.png", pad_inches=1)
 
+test_global_lap = global_laplacian.copy()
+
+i = 0
+for image in range(len(test_global_lap) - 1):
+  print("i", i)
+  if i == 0:
+    image1 = test_global_lap[i]
+  else:
+    image1 = image3
+
+  image2 = test_global_lap[i + 1]
+  image3 = cv2.addWeighted(image1,1,image2,.7,0)
+  f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
+  ax1.imshow(image3, cmap="gray")
+  ax1.invert_yaxis()
+  i += 1
+
+
+
+"""
+t_lap0 = test_global_lap[0]
+t_lap3 = test_global_lap[1]
+
+_, bin_gray = cv2.threshold(t_lap0, 0, 255, cv2.THRESH_OTSU)
+#bin_gray = cv2.morphologyEx(bin_gray, cv2.MORPH_DILATE, np.ones((3, 3), dtype=int))
+
+image_end = cv2.addWeighted(t_lap0,1,t_lap3,.7,0)
+f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
+ax1.imshow(t_lap0, cmap="gray")
+ax1.invert_yaxis()
+"""
+
+global_contours_temp = global_contours.copy()
+global_contours_ar = np.array(global_contours_temp, dtype=np.object)
+
+i=0
+#temp = image3.copy()
+temp = test_global_lap.copy()
+
+for contours in global_contours_ar:
+  print(len(contours), "iteration", i)
+  _temp_contours = temp[i].copy()
+  for c in contours:
+    hull = cv2.convexHull(c)
+    cv2.drawContours(_temp_contours, [hull], 0, (255,255, 255), 1)
+  fig, ax = plt.subplots(1, figsize=(12,8))
+  ax.imshow(_temp_contours)
+  ax.invert_yaxis()
+  i+=1
+
+global_mser_temp = global_mser.copy()
+global_mser_ar = np.array(global_mser_temp, dtype=np.object)
+image_contour = image3.copy()
+
+i=0
+temp2 = test_global_lap.copy()
+
+for contours in global_mser_ar:
+  print(len(contours))
+  
+  for c in contours:
+    hull = cv2.convexHull(c)
+    cv2.drawContours(temp2[i], [hull], 0, (255,255, 255), 1)
+    fig, ax = plt.subplots(1, figsize=(12,8))
+    ax.imshow(temp2[i])
+    ax.invert_yaxis()
+  i+=1
+
 #s_mask_file = gray.copy()
-s_mask_file = cv2.imread("mask_5.jpg" , cv2.IMREAD_GRAYSCALE)
+s_mask_file = cv2.imread(DIR_TEST + "mask_5.jpg" , cv2.IMREAD_GRAYSCALE)
 ht, wd = s_mask_file.shape
 
 temp = np.zeros([ s_mask_file.shape[0] + 2 , s_mask_file.shape[1] + 2], np.uint8)
@@ -654,8 +730,6 @@ ax1.imshow(temp, cmap="gray")
 ax2.imshow(final, cmap="gray")
 #ax1.invert_yaxis()
 
-
-
 dist = cv2.distanceTransform(s_mask_file, cv2.DIST_L2, 3)
 # Normalize the distance image for range = {0.0, 1.0}
 # so we can visualize and threshold it
@@ -679,45 +753,10 @@ sobely = cv2.Sobel(gray, 0, dx=0,dy=1)
 sobely = np.uint8(np.absolute(sobely))
 
 f, (ax,ax2) = plt.subplots(1,2, figsize=(11,8))
-ax.imshow(sobely, cmap="gray")
+ax.imshow(gray, cmap="gray")
 ax.invert_yaxis()
-ax2.imshow(canny, cmap="gray")
+ax2.imshow(lap, cmap="gray")
 ax2.invert_yaxis()
-
-global_contours_ar = np.array(global_contours, dtype=np.object)
-image_contour = lap.copy()
-
-i=0
-temp = lap.copy()
-for contours in global_contours_ar:
-  print(len(contours))
-  for c in contours:
-    hull = cv2.convexHull(c)
-    cv2.drawContours(temp, [hull], 0, (255,255, 255), 1)
-    fig, ax = plt.subplots(1, figsize=(12,8))
-    ax.imshow(temp)
-    ax.invert_yaxis()
-  i+=1
-  break
-#fig, ax = plt.subplots(1, figsize=(12,8))
-#ax.imshow(image_contour)
-#ax.invert_yaxis()
-
-global_mser_ar = np.array(global_mser, dtype=np.object)
-image_contour = lap.copy()
-
-i=0
-temp = lap.copy()
-for contours in global_mser_ar:
-  print(len(contours))
-  for c in contours:
-    hull = cv2.convexHull(c)
-    cv2.drawContours(temp, [hull], 0, (255,255, 255), 1)
-    fig, ax = plt.subplots(1, figsize=(12,8))
-    ax.imshow(temp)
-    ax.invert_yaxis()
-  i+=1
-  break
 
 # Contours
 
@@ -814,7 +853,7 @@ plt.imshow(labels)
 
 imshow_components(labels)
 
-perspective = cc.copy()
+perspective = gray.copy()
 
 # create the x and y coordinate arrays (here we just use pixel indices)
 xx, yy = np.mgrid[0:perspective.shape[0], 0:perspective.shape[1]]
