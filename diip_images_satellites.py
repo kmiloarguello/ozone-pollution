@@ -47,7 +47,6 @@ print(cv2.__version__)
 !apt-get install libgeos-3.5.0
 !apt-get install libgeos-dev
 !pip install https://github.com/matplotlib/basemap/archive/master.zip
-
 !pip install http://sourceforge.net/projects/matplotlib/files/matplotlib-toolkits/
 
 from mpl_toolkits.basemap import Basemap,cm
@@ -85,11 +84,11 @@ size1 = .0625
 
 ## LOOP
 start = 1
-end = 10
+end = 20
 
 # Dates
 day = 6
-image_type="LT"
+image_type="UT"
 year=2008
 month=5
 
@@ -205,12 +204,19 @@ for i in range(start,end):
         image_close = closing.copy()
 
         image_large_close = cv2.morphologyEx(closing, cv2.MORPH_CLOSE, np.ones((9,9),np.uint8), iterations = 3)
-        _, image_large_close_mask = cv2.threshold(image_large_close, 1, 255, cv2.THRESH_OTSU)
-        image_large_close_mask_inv = cv2.bitwise_not(image_large_close_mask)
-        img1_bg = cv2.bitwise_and(image_close,image_close,mask = image_large_close_mask_inv)
+        #image_large_close = cv2.medianBlur(image_large_close, 3)
+        #image_large_close1 = np.where(image_large_close == 0, image_large_close.mean(), image_large_close)
 
-        image_mix = cv2.add(closing,image_large_close) # cv2.addWeighted(image_close,1,image_large_close,.1,0)
-
+        test_i_c = image_close.copy()
+        impaintint = image_close.copy()
+        
+        #if i >= 15:
+        #image_close[image_close == 0] = np.mean(image_large_close)
+        test_i_c = np.where(test_i_c == 0, 255, test_i_c)
+        test_i_c = np.where(test_i_c != 255, 0, test_i_c)
+        impaintint = cv2.inpaint(image_close, test_i_c, 3, cv2.INPAINT_NS)
+        #image_large_close[image_large_close == 0] = np.mean(colgrid)
+       
         #mask_path_img = DIR_TEST + 'test_image_ps3.jpg'
         ##mask_path_img = 'mask_2.jpg'
         #mask_file = cv2.imread(mask_path_img, cv2.IMREAD_GRAYSCALE)
@@ -220,7 +226,7 @@ for i in range(start,end):
         gray = image_large_close.copy()
 
         ## Below code convert image gradient in both x and y direction
-        image_laplacian = cv2.Laplacian(gray, cv2.CV_64F, ksize=1) 
+        image_laplacian = cv2.Laplacian(gray, cv2.CV_64F, ksize=3) 
         image_laplacian = np.uint8(np.absolute(image_laplacian))
         global_laplacian.append(image_laplacian)
         ## Below code convert image gradient in x direction
@@ -277,9 +283,9 @@ for i in range(start,end):
         fig, (ax0,ax1,ax2,ax3) = plt.subplots(1,4, figsize=(21,15))
         ax0.imshow(image_close, cmap="gray")
         ax0.invert_yaxis()
-        ax1.imshow(image_large_close, cmap="gray")
+        ax1.imshow(image_laplacian, cmap="gray")
         ax1.invert_yaxis()
-        ax2.imshow(img1_bg, cmap="gray")
+        ax2.imshow(image_contour, cmap="gray")
         ax2.invert_yaxis()
         ax3.imshow(image_mser)
         ax3.invert_yaxis()
@@ -287,6 +293,34 @@ for i in range(start,end):
   global_thresh -= 5
   global_thresh_down -= 5
   print('end month')
+
+orig = image_close.copy()
+test = gray.copy()
+
+test2 = cv2.GaussianBlur( test, (3,3), 0 )
+test3 = cv2.medianBlur(test, 3) 
+#test3 = cv2.normalize(test3, np.ones((test3.shape[0], test3.shape[1])) , 0, 255, cv2.NORM_MINMAX )
+
+t_ = test3.copy()
+
+t_ = np.where(t_ == 0, 255, t_)
+t_ = np.where(t_ != 255, 0, t_)
+t_paint = cv2.inpaint(test3, t_, 3, cv2.INPAINT_NS) # INPAINT_TELEA
+#image_large_close[image_large_close == 0] = np.mean(colgrid)
+
+
+#test3 = np.where(test3 == 0, test3.mean(), test3)
+
+## Below code convert image gradient in both x and y direction
+test_laplacian = cv2.Laplacian(t_paint, cv2.CV_64F, ksize=3) 
+test_laplacian = np.uint8(np.absolute(test_laplacian))
+
+f1, ax1 = plt.subplots(1, 1, figsize=(11,8))
+ax1.imshow(t_paint , cmap="gray")
+ax1.invert_yaxis()
+
+## hist
+#ax1.hist(test3.ravel(),255,[0,255])
 
 _deg = .125
 _size = .0625
@@ -649,13 +683,13 @@ temp2 = test_global_lap.copy()
 
 for contours in global_mser_ar:
   print(len(contours))
-  
+  _temp_contours2 = temp2[i].copy()
   for c in contours:
     hull = cv2.convexHull(c)
-    cv2.drawContours(temp2[i], [hull], 0, (255,255, 255), 1)
-    fig, ax = plt.subplots(1, figsize=(12,8))
-    ax.imshow(temp2[i])
-    ax.invert_yaxis()
+    cv2.drawContours(_temp_contours2, [hull], 0, (255,255, 255), 1)
+  fig, ax = plt.subplots(1, figsize=(12,8))
+  ax.imshow(_temp_contours2)
+  ax.invert_yaxis()
   i+=1
 
 #s_mask_file = gray.copy()
