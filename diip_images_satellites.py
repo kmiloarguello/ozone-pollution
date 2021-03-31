@@ -25,6 +25,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from PIL import Image
 from skimage import measure, transform
 from scipy.ndimage import label
+from scipy.spatial import distance
 from scipy import ndimage
 import tarfile
 import string
@@ -91,6 +92,7 @@ year=2008
 month=5
 
 ## THRESH
+global_regions = []
 global_contours = []
 global_mser = []
 global_laplacian = []
@@ -212,6 +214,7 @@ for i in range(start,end):
         image_holes = np.where(image_holes == 0, 255, image_holes)
         image_holes = np.where(image_holes != 255, 0, image_holes)
         image_holes_dilate = cv2.morphologyEx(image_holes, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations = 2)
+        image_holes_dilate_inv = cv2.bitwise_not(image_holes_dilate)
         
         ## IMAGE PAINTIN
         #impaintint = image_close.copy()
@@ -228,12 +231,11 @@ for i in range(start,end):
         #impaintint = cv2.inpaint(image_close, mask_file, 6, cv2.INPAINT_TELEA)
 
         gray = image_close.copy()
+        global_regions.append(gray)
 
         ## Below code convert image gradient in both x and y direction
         image_laplacian = cv2.Laplacian(gray, cv2.CV_16U, ksize=3) 
         image_laplacian = np.uint8(np.absolute(image_laplacian))
-
-        image_holes_dilate_inv = cv2.bitwise_not(image_holes_dilate)
         image_laplacian = cv2.bitwise_and(image_laplacian,image_laplacian,mask = image_holes_dilate_inv)
 
         global_laplacian.append(image_laplacian)
@@ -261,7 +263,7 @@ for i in range(start,end):
         image_mser = image_laplacian.copy()
 
         #detect regions in gray scale image
-        regions, bboxes = mser.detectRegions(image_laplacian)
+        regions, bboxes = mser.detectRegions(gray)
 
         global_mser.append(regions)
 
@@ -274,6 +276,7 @@ for i in range(start,end):
         thickness = 1
 
         cv2.polylines(image_mser, hulls,isClosed, color, thickness)
+        #image_mser = cv2.bitwise_and(image_mser,image_mser,mask = image_holes_dilate_inv)
 
         _, labels, _, _ = cv2.connectedComponentsWithStats(image_laplacian, connectivity=8, ltype=cv2.CV_32S) 
 
@@ -318,9 +321,9 @@ t_ = test3.copy()
 
 t_ = np.where(t_ == 0, 255, t_)
 t_ = np.where(t_ != 255, 0, t_)
-t_dilate = cv2.morphologyEx(t_, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations = 2)
+t_dilate = cv2.morphologyEx(t_, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations = 3)
 
-#t_paint = cv2.inpaint(test3, t_, 3, cv2.INPAINT_NS) # INPAINT_TELEA
+t_paint = cv2.inpaint(test3, t_, 3, cv2.INPAINT_NS) # INPAINT_TELEA
 #image_large_close[image_large_close == 0] = np.mean(colgrid)
 
 #test3 = np.where(test3 == 0, test3.mean(), test3)
@@ -332,10 +335,39 @@ test_laplacian = np.uint8(np.absolute(test_laplacian))
 mask_inv = cv2.bitwise_not(t_dilate)
 test_laplacian = cv2.bitwise_and(test_laplacian,test_laplacian,mask = mask_inv)
 
+
+### MSER
+
+#Create MSER object
+mser = cv2.MSER_create()
+
+test_mser = test3.copy()
+test_mser = cv2.bitwise_and(test_mser,test_mser,mask = mask_inv)
+mycolgrid = colgrid.copy()
+
+mycolgrid = ma.masked_values(mycolgrid, 0.)
+
+
+#mser.setPass2Only(1)
+
+print(mser.getPass2Only())
+
+
+#detect regions in gray scale image
+regions2, bboxes2 = mser.detectRegions(mask_inv)
+hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions2]
+isClosed = True
+# Blue color in BGR 
+color = (255, 0, 0) 
+# Line thickness of 2 px 
+thickness = 1
+
+cv2.polylines(test_mser, hulls,isClosed, color, thickness)
+
 f1, (ax1,ax2) = plt.subplots(1, 2, figsize=(21,15))
-ax1.imshow(orig , cmap="gray")
+ax1.imshow(test3 , cmap="gray")
 ax1.invert_yaxis()
-ax2.imshow(test_laplacian , cmap="gray")
+ax2.imshow(t_dilate , cmap="gray")
 ax2.invert_yaxis()
 
 ## hist
@@ -375,42 +407,160 @@ ax1.invert_yaxis()
 
 ## test 28/03
 
-test_global_lap1 = global_laplacian.copy()
+test_global_regs = global_regions.copy()
 #Create MSER object
 mser = cv2.MSER_create()
+#mser.setMinArea(1)
+mser.setMaxArea(5000)
+#mser.setPass2Only(1)
+
+print("MAX", mser.getMaxArea())
 
 i = 0
-for image in range(len(test_global_lap1) - 1):
+for image in range(len(test_global_regs) - 1):
   print("i", i)
   if i == 0:
-    image1 = test_global_lap1[i]
+    image1 = test_global_regs[i]
   else:
     image1 = image3
 
-  image2 = test_global_lap[i + 1]
+  image2 = test_global_regs[i + 1]
   image3 = cv2.addWeighted(image1,1,image2,.7,0)
 
+  image4 = test_global_regs[i]
+
+  t_ = image4.copy()
+  t_ = np.where(t_ == 0, 255, t_)
+  t_ = np.where(t_ != 255, 0, t_)
+  #t_dilate = cv2.morphologyEx(t_, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations = 2)
+  #mask_inv = cv2.bitwise_not(t_dilate)
+  _edge = cv2.Canny(t_, mycolgrid.min(), mycolgrid.max())
+
   test_mser = image3.copy()
-  #detect regions in gray scale image
-  regions2, bboxes2 = mser.detectRegions(test_mser)
+  _blank1 = np.zeros(test_mser.shape, np.uint8)
+  _blank2 = np.zeros(test_mser.shape, np.uint8)
+
+  #test_mser = cv2.bitwise_and(test_mser,test_mser,mask = mask_inv)
+  regions2, boundingBoxes = mser.detectRegions(test_mser)
+  regions2 = sorted(regions2, key=cv2.contourArea, reverse=True)
+
+  #for box in boundingBoxes:
+  #  x, y, w, h = box
+  #  cv2.rectangle(_blank1, (x, y), (x+w, y+h), (255, 255, 255), 1)
+  
+  regions3, boundingBoxes3 = mser.detectRegions(_edge)
+  regions3 = sorted(regions3, key=cv2.contourArea, reverse=True)
+
+  #if i == len(test_global_regs) - 2:
+  #  j = 0
+  #  for c in regions2:
+  #    temp = image4.copy()
+  #    hull = cv2.convexHull(c)
+  #    cv2.drawContours(temp, [hull], 0, (255,255, 255), 1)
+  #    f, (ax1,ax2) = plt.subplots(1, 2, figsize=(11,8))
+  #    ax1.imshow(_edge)
+  #    ax1.invert_yaxis()
+  #    ax2.imshow(temp)
+  #    ax2.invert_yaxis()
+  #    #f.savefig(DIR_TEST + image_type+"-mser-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(i)+".png", pad_inches=1)
+  #    j+=1
+
+  
   hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions2]
+  contours_hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions3]
+  
   isClosed = True
   # Blue color in BGR 
   color = (255, 0, 0) 
   # Line thickness of 2 px 
   thickness = 1
 
-  cv2.polylines(test_mser, hulls,isClosed, color, thickness)
-
-  f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
-  ax1.imshow(test_mser, cmap="gray")
+  #retval	=	cv2.ShapeDistanceExtractor.computeDistance(	_hulls, _hulls	)
+  
+  cv2.polylines(_blank1, hulls,isClosed, color, thickness)
+  cv2.polylines(_blank2, contours_hulls,isClosed, color, thickness)
+  
+  f, (ax0, ax1,ax2,ax3) = plt.subplots(1, 4, figsize = (21,8))
+  ax0.imshow(test_mser, cmap="gray")
+  ax0.invert_yaxis()
+  ax1.imshow(t_, cmap="gray")
   ax1.invert_yaxis()
-  f.savefig(DIR_TEST + image_type + "/mser/" + image_type + "_mser_" + str(year) + "-" + str(month) + "-" + str(day) + "_deg_" + str(degree) + "_i_0" + str(i) + ".png", pad_inches=.01)
+  ax2.imshow(_blank1, cmap="gray")
+  ax2.invert_yaxis()
+  ax3.imshow(_blank2, cmap="gray")
+  ax3.invert_yaxis()
+  #f.savefig(DIR_TEST + image_type + "/mser/" + image_type + "_mser_" + str(year) + "-" + str(month) + "-" + str(day) + "_deg_" + str(degree) + "_i_0" + str(i) + ".png", pad_inches=.01)
   i += 1
+
+#Create MSER object
+mser1 = cv2.MSER_create()
+vis = t_.copy()
+vis1 = image3.copy()
+mser1.setMaxArea(5000)
+
+#detect regions in gray scale image
+
+regions4, bboxes4 = mser1.detectRegions(vis1)
+regions4 = sorted(regions4, key=cv2.contourArea, reverse=True)
+
+regions5, bboxes5 = mser1.detectRegions(vis)
+regions5 = sorted(regions5, key=cv2.contourArea, reverse=True)
+
+isClosed = True  
+## Blue color in BGR 
+color = (255, 0, 0) 
+## Line thickness of 2 px 
+thickness = -1
+
+#retval = sd.computeDistance(	np.array(regions4, dtype=np.object), np.array(regions5, dtype=np.object)	)
+distance_ = distance.jaccard(regions5, regions4)
+
+temp = np.zeros(gray.shape, np.uint8)
+
+i = 0
+for c4 in regions4:
+  hull4 = cv2.convexHull(c4)
+
+  # main shapes
+  cv2.drawContours(temp, [hull4], 0, color, thickness)
+    
+  temp1 = np.zeros(gray.shape, np.uint8)
+  for c5 in regions5:
+    hull5 = cv2.convexHull(c5)
+    cv2.drawContours(temp1, [hull5], 0, color, thickness)
+    #temp1 = cv2.morphologyEx(temp1, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations = 1)
+
+  temp2 = np.subtract( temp , temp1 )
+
+  f, (ax, ax1, ax2) = plt.subplots(1, 3, figsize=(21,8))
+  ax.imshow(temp, cmap="gray")
+  ax.invert_yaxis()
+  ax1.imshow(temp1, cmap="gray")
+  ax1.invert_yaxis()
+  ax2.imshow(temp2, cmap="gray")
+  ax2.invert_yaxis()
+  #f.savefig(DIR_TEST + image_type+"-mser-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(i)+".png", pad_inches=1)
+  i+=1
+  #if i == 3:
+
+#hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions]
+#isClosed = True  
+## Blue color in BGR 
+#color = (255, 0, 0) 
+## Line thickness of 2 px 
+#thickness = 1
+#cv2.polylines(vis, hulls,isClosed, color, thickness) 
+#f, ax = plt.subplots(1, 1, figsize=(11,8))
+#ax.imshow(vis)
+#ax.invert_yaxis()
+
+f, ax = plt.subplots(1, 1, figsize=(11,8))
+ax.imshow(image3)
+ax.invert_yaxis()
 
 ## test 28/03
 
-test_global_lap2 = global_laplacian.copy()
+test_global_lap2 = global_regions.copy()
 
 #test_contour = image_laplacian.copy()
 #edge = cv2.Canny(image_contour, colgrid.min(), colgrid.max())
@@ -437,9 +587,9 @@ for image in range(len(test_global_lap2) - 1):
     cv2.drawContours(test_contour, [hull], 0, (255,255, 255), 1)
 
   f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
-  ax1.imshow(test_contour, cmap="gray")
+  ax1.imshow(image3, cmap="gray")
   ax1.invert_yaxis()
-  f.savefig(DIR_TEST + image_type + "/findContours/" + image_type + "_contours_" + str(year) + "-" + str(month) + "-" + str(day) + "_deg_" + str(degree) + "_i_0" + str(i) + ".png", pad_inches=.01)
+  #f.savefig(DIR_TEST + image_type + "/findContours/" + image_type + "_contours_" + str(year) + "-" + str(month) + "-" + str(day) + "_deg_" + str(degree) + "_i_0" + str(i) + ".png", pad_inches=.01)
   i += 1
 
 _deg = .125
@@ -519,7 +669,7 @@ for i in range(10,11):
         
         # Plot the original
         fig1, (f1ax1) = plt.subplots(1, 1, figsize=(11,9))
-        f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='gray', vmin=colgrid.min(), vmax=colgrid.max())
+        f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='jet', vmin=colgrid.min(), vmax=colgrid.max())
 
 print(v_x.shape, v_x.max())
 print(v_y.shape, v_y.max())
