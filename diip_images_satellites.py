@@ -27,6 +27,8 @@ from skimage import measure, transform
 from scipy.ndimage import label
 from scipy.spatial import distance
 from scipy import ndimage
+from shapely.geometry import Point, LineString, Polygon, LinearRing, MultiPoint
+from descartes import PolygonPatch
 import tarfile
 import string
 import calendar
@@ -87,7 +89,7 @@ end = 20
 
 # Dates
 day = 6
-image_type="UT"
+image_type="LT"
 year=2008
 month=5
 
@@ -506,53 +508,128 @@ regions4 = sorted(regions4, key=cv2.contourArea, reverse=True)
 regions5, bboxes5 = mser1.detectRegions(vis)
 regions5 = sorted(regions5, key=cv2.contourArea, reverse=True)
 
-isClosed = True  
+isClosed = True
 ## Blue color in BGR 
-color = (255, 0, 0) 
+color = (255, 0, 0)
 ## Line thickness of 2 px 
 thickness = -1
 
-#retval = sd.computeDistance(	np.array(regions4, dtype=np.object), np.array(regions5, dtype=np.object)	)
-distance_ = distance.jaccard(regions5, regions4)
+fig = plt.figure()
 
-temp = np.zeros(gray.shape, np.uint8)
+for c in regions5:
+  region = list()
+  temp = np.zeros(vis1.shape, np.uint8)
+  hull = cv2.convexHull(c)
 
-i = 0
-for c4 in regions4:
-  hull4 = cv2.convexHull(c4)
+  for h in hull:
+    region.append(h[0].tolist())
 
-  # main shapes
-  cv2.drawContours(temp, [hull4], 0, color, thickness)
-    
-  temp1 = np.zeros(gray.shape, np.uint8)
-  for c5 in regions5:
-    hull5 = cv2.convexHull(c5)
-    cv2.drawContours(temp1, [hull5], 0, color, thickness)
-    #temp1 = cv2.morphologyEx(temp1, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations = 1)
+  region.append(region[0])
+  poly = Polygon(region)
 
-  temp2 = np.subtract( temp , temp1 )
+  line = LineString(region)
+  x, y = line.xy
 
-  f, (ax, ax1, ax2) = plt.subplots(1, 3, figsize=(21,8))
-  ax.imshow(temp, cmap="gray")
-  ax.invert_yaxis()
-  ax1.imshow(temp1, cmap="gray")
-  ax1.invert_yaxis()
-  ax2.imshow(temp2, cmap="gray")
-  ax2.invert_yaxis()
-  #f.savefig(DIR_TEST + image_type+"-mser-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(i)+".png", pad_inches=1)
-  i+=1
-  #if i == 3:
+  #plt.plot(x,y)
+  ax = fig.add_subplot(111)
+  ring_patch = PolygonPatch(poly)
+  ax.add_patch(ring_patch)
+  xrange = [0, image3.shape[1]]
+  yrange = [0, image3.shape[0]]
+  ax.set_xlim(*xrange)
+  ax.set_ylim(*yrange)
 
-#hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions]
-#isClosed = True  
-## Blue color in BGR 
-#color = (255, 0, 0) 
-## Line thickness of 2 px 
-#thickness = 1
-#cv2.polylines(vis, hulls,isClosed, color, thickness) 
-#f, ax = plt.subplots(1, 1, figsize=(11,8))
-#ax.imshow(vis)
-#ax.invert_yaxis()
+bboxes5
+
+def jaccard_similarity(list1, list2):
+    intersection = len(set(list1).intersection(list2))
+    union = len(set(list1)) + len(set(list2)) - intersection
+
+    return intersection / union
+
+# Define region to compare
+
+region1test = regions5.copy()
+region2test = regions4.copy()
+
+reg0 = list()
+hull0 = cv2.convexHull(region1test[1])
+for h in hull0:
+  reg0.append(h[0].tolist())
+reg0.append(reg0[0])
+poly0 = Polygon(reg0)
+
+fig0 = plt.figure()
+ax0 = fig0.add_subplot(111)
+ring_patch = PolygonPatch(poly0)
+ax0.add_patch(ring_patch)
+ax0.set_facecolor('gray')
+xrange0 = [0, image3.shape[1]]
+yrange0 = [0, image3.shape[0]]
+ax0.set_xlim(*xrange0)
+ax0.set_ylim(*yrange0)
+
+fig = plt.figure()
+
+for i,r in enumerate(region2test):
+  reg1 = list()
+  hull1 = cv2.convexHull(r)
+  for h in hull1:
+    reg1.append(h[0].tolist())
+  reg1.append(reg1[0])
+  poly1 = Polygon(reg1)
+
+  ## If the regions are intersected -> remove it
+  if poly0.intersects(poly1):
+    reg1.pop()
+    print(i)
+    del region2test[i]
+  else:
+    ax1 = fig.add_subplot(111)
+    ring_patch = PolygonPatch(poly1)
+    ax1.add_patch(ring_patch)
+    xrange1 = [0, image3.shape[1]]
+    yrange1 = [0, image3.shape[0]]
+    ax1.set_xlim(*xrange1)
+    ax1.set_ylim(*yrange1)
+
+# Define region to compare iterativamente
+
+global_polygon = list()
+fig = plt.figure()
+
+for i,r0 in enumerate(regions4):
+  regtemp = list()  
+  reg0 = list()
+  hull0 = cv2.convexHull(r0)
+
+  for h0 in hull0:
+    reg0.append(h0[0].tolist())
+  reg0.append(reg0[0])
+  poly0 = Polygon(reg0)
+
+  for r1 in regions5:
+    reg1 = list()
+    hull1 = cv2.convexHull(r1)
+    for h in hull1:
+      reg1.append(h[0].tolist())
+    reg1.append(reg1[0])
+    poly1 = Polygon(reg1)
+    line1 = LineString(reg1)
+
+    if poly0.intersects(poly1):
+      if len(reg0) == 0:
+        print("EMPTY---------------")
+        continue
+      del regions4[i]
+  
+  ax1 = fig.add_subplot(111)
+  ring_patch = PolygonPatch(poly0)
+  ax1.add_patch(ring_patch)
+  xrange1 = [0, image3.shape[1]]
+  yrange1 = [0, image3.shape[0]]
+  ax1.set_xlim(*xrange1)
+  ax1.set_ylim(*yrange1)
 
 f, ax = plt.subplots(1, 1, figsize=(11,8))
 ax.imshow(image3)
