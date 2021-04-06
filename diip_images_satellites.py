@@ -27,6 +27,8 @@ from skimage import measure, transform
 from scipy.ndimage import label
 from scipy.spatial import distance
 from scipy import ndimage
+from shapely.geometry import Point, LineString, Polygon, LinearRing, MultiPoint
+from descartes import PolygonPatch
 import tarfile
 import string
 import calendar
@@ -194,7 +196,7 @@ for i in range(start,end):
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         #gray = cv2.normalize(gray, np.ones((lon_g.shape[0], lat_g.shape[0])) , 0, 255, cv2.NORM_MINMAX )
 
-        scale_percent = 200 # percent of original size
+        scale_percent = 100 #200 # percent of original size
         width = int(gray.shape[1] * scale_percent / 100)
         height = int(gray.shape[0] * scale_percent / 100)
         dim = (width, height)
@@ -305,73 +307,25 @@ for i in range(start,end):
   global_thresh_down -= 5
   print('end month')
 
-orig = image_close.copy()
-test = gray.copy()
+## PRE TREATMENT
 
-test2 = cv2.GaussianBlur( test, (3,3), 0 )
-# test3 = cv2.medianBlur(orig, 3) 
+treated_image = image_close.copy()
+test3 = treated_image.copy()
 
-test3 = orig.copy()
+background_image = treated_image.copy()
+background_image = np.where(background_image == 0, 255, background_image)
+background_image = np.where(background_image != 255, 0, background_image)
+background_dilate = cv2.morphologyEx(background_image, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations = 3)
 
-im_erod = cv2.morphologyEx(test3, cv2.MORPH_DILATE, np.ones((2,2),np.uint8), iterations = 3)
-
-#test3 = cv2.normalize(test3, np.ones((test3.shape[0], test3.shape[1])) , 0, 255, cv2.NORM_MINMAX )
-
-t_ = test3.copy()
-
-t_ = np.where(t_ == 0, 255, t_)
-t_ = np.where(t_ != 255, 0, t_)
-t_dilate = cv2.morphologyEx(t_, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations = 3)
-
-t_paint = cv2.inpaint(test3, t_, 3, cv2.INPAINT_NS) # INPAINT_TELEA
-#image_large_close[image_large_close == 0] = np.mean(colgrid)
-
-#test3 = np.where(test3 == 0, test3.mean(), test3)
-
-## Below code convert image gradient in both x and y direction
-test_laplacian = cv2.Laplacian(test3, cv2.CV_8UC1, ksize=3) 
-test_laplacian = np.uint8(np.absolute(test_laplacian))
-
-mask_inv = cv2.bitwise_not(t_dilate)
-test_laplacian = cv2.bitwise_and(test_laplacian,test_laplacian,mask = mask_inv)
-
-
-### MSER
-
-#Create MSER object
-mser = cv2.MSER_create()
-
-test_mser = test3.copy()
-test_mser = cv2.bitwise_and(test_mser,test_mser,mask = mask_inv)
-mycolgrid = colgrid.copy()
-
-mycolgrid = ma.masked_values(mycolgrid, 0.)
-
-
-#mser.setPass2Only(1)
-
-print(mser.getPass2Only())
-
-
-#detect regions in gray scale image
-regions2, bboxes2 = mser.detectRegions(mask_inv)
-hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions2]
-isClosed = True
-# Blue color in BGR 
-color = (255, 0, 0) 
-# Line thickness of 2 px 
-thickness = 1
-
-cv2.polylines(test_mser, hulls,isClosed, color, thickness)
+t_paint = cv2.inpaint(treated_image, background_dilate, 3, cv2.INPAINT_NS) # INPAINT_TELEA
 
 f1, (ax1,ax2) = plt.subplots(1, 2, figsize=(21,15))
-ax1.imshow(test3 , cmap="gray")
+ax1.imshow(treated_image , cmap="gray")
 ax1.invert_yaxis()
-ax2.imshow(t_dilate , cmap="gray")
+ax2.imshow(background_dilate , cmap="gray")
 ax2.invert_yaxis()
 
-## hist
-#ax1.hist(test3.ravel(),255,[0,255])
+### SHOWS THE LAPLACIAN AT DIFFERENT LEVELS
 
 test_global_lap = global_laplacian.copy()
 
@@ -385,40 +339,21 @@ for image in range(len(test_global_lap) - 1):
 
   image2 = test_global_lap[i + 1]
   image3 = cv2.addWeighted(image1,1,image2,.7,0)
+
+  final_laplacian = image3.copy()
+  
   f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
-  ax1.imshow(image3, cmap="gray")
+  ax1.imshow(final_laplacian, cmap="gray")
   ax1.invert_yaxis()
-  f.savefig(DIR_TEST + image_type + "/gradient/" + image_type + "_gradient_" + str(year) + "-" + str(month) + "-" + str(day) + "_deg_" + str(degree) + "_i_0" + str(i) + ".png", pad_inches=.01)
+  #f.savefig(DIR_TEST + image_type + "/gradient/" + image_type + "_gradient_" + str(year) + "-" + str(month) + "-" + str(day) + "_deg_" + str(degree) + "_i_0" + str(i) + ".png", pad_inches=.01)
   i += 1
 
-
-"""
-t_lap0 = test_global_lap[0]
-t_lap3 = test_global_lap[1]
-
-_, bin_gray = cv2.threshold(t_lap0, 0, 255, cv2.THRESH_OTSU)
-#bin_gray = cv2.morphologyEx(bin_gray, cv2.MORPH_DILATE, np.ones((3, 3), dtype=int))
-
-image_end = cv2.addWeighted(t_lap0,1,t_lap3,.7,0)
-f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
-ax1.imshow(t_lap0, cmap="gray")
-ax1.invert_yaxis()
-"""
-
-## test 28/03
+## CALCULATE THE BACKGROUND AT EACH LEVEL AND THE FINAL GRAY IMAGE
 
 test_global_regs = global_regions.copy()
-#Create MSER object
-mser = cv2.MSER_create()
-#mser.setMinArea(1)
-mser.setMaxArea(5000)
-#mser.setPass2Only(1)
-
-print("MAX", mser.getMaxArea())
 
 i = 0
 for image in range(len(test_global_regs) - 1):
-  print("i", i)
   if i == 0:
     image1 = test_global_regs[i]
   else:
@@ -427,136 +362,247 @@ for image in range(len(test_global_regs) - 1):
   image2 = test_global_regs[i + 1]
   image3 = cv2.addWeighted(image1,1,image2,.7,0)
 
-  image4 = test_global_regs[i]
+  combination_regions = image3.copy()
+  current_region = test_global_regs[i]
 
-  t_ = image4.copy()
-  t_ = np.where(t_ == 0, 255, t_)
-  t_ = np.where(t_ != 255, 0, t_)
-  #t_dilate = cv2.morphologyEx(t_, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations = 2)
-  #mask_inv = cv2.bitwise_not(t_dilate)
-  _edge = cv2.Canny(t_, mycolgrid.min(), mycolgrid.max())
+  background_image = current_region.copy()
+  background_image = np.where(background_image == 0, 255, background_image)
+  background_image = np.where(background_image != 255, 0, background_image)
 
-  test_mser = image3.copy()
-  _blank1 = np.zeros(test_mser.shape, np.uint8)
-  _blank2 = np.zeros(test_mser.shape, np.uint8)
-
-  #test_mser = cv2.bitwise_and(test_mser,test_mser,mask = mask_inv)
-  regions2, boundingBoxes = mser.detectRegions(test_mser)
-  regions2 = sorted(regions2, key=cv2.contourArea, reverse=True)
-
-  #for box in boundingBoxes:
-  #  x, y, w, h = box
-  #  cv2.rectangle(_blank1, (x, y), (x+w, y+h), (255, 255, 255), 1)
-  
-  regions3, boundingBoxes3 = mser.detectRegions(_edge)
-  regions3 = sorted(regions3, key=cv2.contourArea, reverse=True)
-
-  #if i == len(test_global_regs) - 2:
-  #  j = 0
-  #  for c in regions2:
-  #    temp = image4.copy()
-  #    hull = cv2.convexHull(c)
-  #    cv2.drawContours(temp, [hull], 0, (255,255, 255), 1)
-  #    f, (ax1,ax2) = plt.subplots(1, 2, figsize=(11,8))
-  #    ax1.imshow(_edge)
-  #    ax1.invert_yaxis()
-  #    ax2.imshow(temp)
-  #    ax2.invert_yaxis()
-  #    #f.savefig(DIR_TEST + image_type+"-mser-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(i)+".png", pad_inches=1)
-  #    j+=1
-
-  
-  hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions2]
-  contours_hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions3]
-  
-  isClosed = True
-  # Blue color in BGR 
-  color = (255, 0, 0) 
-  # Line thickness of 2 px 
-  thickness = 1
-
-  #retval	=	cv2.ShapeDistanceExtractor.computeDistance(	_hulls, _hulls	)
-  
-  cv2.polylines(_blank1, hulls,isClosed, color, thickness)
-  cv2.polylines(_blank2, contours_hulls,isClosed, color, thickness)
-  
-  f, (ax0, ax1,ax2,ax3) = plt.subplots(1, 4, figsize = (21,8))
-  ax0.imshow(test_mser, cmap="gray")
-  ax0.invert_yaxis()
-  ax1.imshow(t_, cmap="gray")
+  f, (ax1) = plt.subplots(1, 1, figsize = (11,8))
+  ax1.imshow(combination_regions, cmap="gray")
   ax1.invert_yaxis()
-  ax2.imshow(_blank1, cmap="gray")
-  ax2.invert_yaxis()
-  ax3.imshow(_blank2, cmap="gray")
-  ax3.invert_yaxis()
-  #f.savefig(DIR_TEST + image_type + "/mser/" + image_type + "_mser_" + str(year) + "-" + str(month) + "-" + str(day) + "_deg_" + str(degree) + "_i_0" + str(i) + ".png", pad_inches=.01)
+
+  f.savefig(DIR_TEST + "/05-03/" + image_type + "/" + image_type + "_combination_" + str(year) + "-" + str(month) + "-" + str(day) + "_deg_" + str(degree) + "_i_0" + str(i) + ".png", pad_inches=.01)
+
   i += 1
 
 #Create MSER object
 mser1 = cv2.MSER_create()
-vis = t_.copy()
-vis1 = image3.copy()
-mser1.setMaxArea(5000)
+image_background = background_image.copy() # background
+image_pollution = combination_regions.copy() # foreground
+mser1.setMaxArea(2500)
+
+#mser1.setMaxArea(5000)
 
 #detect regions in gray scale image
+regions_pollution, bboxes4 = mser1.detectRegions(image_pollution)
+regions_pollution = sorted(regions_pollution, key=cv2.contourArea, reverse=True)
 
-regions4, bboxes4 = mser1.detectRegions(vis1)
-regions4 = sorted(regions4, key=cv2.contourArea, reverse=True)
+regions_background, bboxes5 = mser1.detectRegions(image_background)
+regions_background = sorted(regions_background, key=cv2.contourArea, reverse=True)
 
-regions5, bboxes5 = mser1.detectRegions(vis)
-regions5 = sorted(regions5, key=cv2.contourArea, reverse=True)
-
-isClosed = True  
+isClosed = True
 ## Blue color in BGR 
-color = (255, 0, 0) 
+color = (255, 0, 0)
 ## Line thickness of 2 px 
 thickness = -1
 
-#retval = sd.computeDistance(	np.array(regions4, dtype=np.object), np.array(regions5, dtype=np.object)	)
-distance_ = distance.jaccard(regions5, regions4)
+fig = plt.figure()
 
-temp = np.zeros(gray.shape, np.uint8)
+for c in regions_background:
+  region = list()
+  temp = np.zeros(image_pollution.shape, np.uint8)
+  hull = cv2.convexHull(c)
 
+  for h in hull:
+    region.append(h[0].tolist())
+
+  region.append(region[0])
+  poly = Polygon(region)
+
+  line = LineString(region)
+  x, y = line.xy
+
+  #plt.plot(x,y)
+  ax = fig.add_subplot(111)
+  ring_patch = PolygonPatch(poly)
+  ax.add_patch(ring_patch)
+  xrange = [0, image_pollution.shape[1]]
+  yrange = [0, image_pollution.shape[0]]
+  ax.set_xlim(*xrange)
+  ax.set_ylim(*yrange)
+
+def jaccard_similarity(list1, list2):
+    intersection = len(set(list1).intersection(list2))
+    union = len(set(list1)) + len(set(list2)) - intersection
+
+    return intersection / union
+
+# Define region to compare
+
+region1test = regions_background.copy()
+region2test = regions_pollution.copy()
+
+reg0 = list()
+hull0 = cv2.convexHull(region1test[0])
+for h in hull0:
+  reg0.append(h[0].tolist())
+reg0.append(reg0[0])
+poly0 = Polygon(reg0)
+
+fig0 = plt.figure()
+ax0 = fig0.add_subplot(111)
+ring_patch = PolygonPatch(poly0)
+ax0.add_patch(ring_patch)
+ax0.set_facecolor('gray')
+xrange0 = [0, current_region.shape[1]]
+yrange0 = [0, current_region.shape[0]]
+ax0.set_xlim(*xrange0)
+ax0.set_ylim(*yrange0)
+
+print("INITIAL SIZE",len(region2test))
+
+poligons = list()
+fig = plt.figure()
+
+for i,r in enumerate(region2test):
+  reg1 = list()
+  hull1 = cv2.convexHull(r)
+  for h in hull1:
+    reg1.append(h[0].tolist())
+  reg1.append(reg1[0])
+  poly1 = Polygon(reg1)
+
+  ## If the regions are intersected -> remove it
+  if poly0.intersects(poly1):
+    poligons.append(poly1)
+  
+    ax1 = fig.add_subplot(111)
+    ring_patch1 = PolygonPatch(poly1)
+    ax1.add_patch(ring_patch1)
+    xrange1 = [0, current_region.shape[1]]
+    yrange1 = [0, current_region.shape[0]]
+    ax1.set_xlim(*xrange1)
+    ax1.set_ylim(*yrange1)
+
+# Define region to compare iterativamente
+
+global_polygon = list()
+
+r_background = regions_background.copy()
+r_pollution = regions_pollution.copy()
+
+print("init -------",len(r_pollution))
+
+
+index = 0;
+
+for i,r0 in enumerate(r_pollution):
+  
+  reg0 = list()
+  hull0 = cv2.convexHull(r0)
+  for h0 in hull0:
+    reg0.append(h0[0].tolist())
+  reg0.append(reg0[0])
+  poly0 = Polygon(reg0)
+
+  for r1 in r_background:
+    reg1 = list()
+    hull1 = cv2.convexHull(r1)
+    for h in hull1:
+      reg1.append(h[0].tolist())
+    reg1.append(reg1[0])
+    poly1 = Polygon(reg1)
+
+    if poly0.intersects(poly1):
+      print("deleting...",i,index)
+      r_pollution.pop(i)
+      #print("deleted!",i)
+
+  index += 1
+
+colgrid_value = colgrid.copy()
+
+#f, ax1 = plt.subplots(1, 1, figsize=(11,8))
 i = 0
-for c4 in regions4:
-  hull4 = cv2.convexHull(c4)
+for r in r_pollution:
+  reg0 = list()
+  hull0 = cv2.convexHull(r)
+  for h0 in hull0:
+    reg0.append(h0[0].tolist())
+  reg0.append(reg0[0])
+  poly0 = Polygon(reg0)
 
-  # main shapes
-  cv2.drawContours(temp, [hull4], 0, color, thickness)
-    
-  temp1 = np.zeros(gray.shape, np.uint8)
-  for c5 in regions5:
-    hull5 = cv2.convexHull(c5)
-    cv2.drawContours(temp1, [hull5], 0, color, thickness)
-    #temp1 = cv2.morphologyEx(temp1, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations = 1)
+  #print("------------------------------------------------------------")
+  #print("shape", image_pollution.shape )
+  coord_x = int(poly0.centroid.x)
+  coord_y = int(poly0.centroid.y)
+  #print(coord_x, coord_y )
+  #print("Value colgrid", colgrid_value[coord_y,coord_x])
+  #print("Value gray", image_pollution[coord_y, coord_x])
+  #print("mean",image_pollution.mean(), colgrid.mean())
 
-  temp2 = np.subtract( temp , temp1 )
-
-  f, (ax, ax1, ax2) = plt.subplots(1, 3, figsize=(21,8))
-  ax.imshow(temp, cmap="gray")
-  ax.invert_yaxis()
-  ax1.imshow(temp1, cmap="gray")
-  ax1.invert_yaxis()
-  ax2.imshow(temp2, cmap="gray")
-  ax2.invert_yaxis()
-  #f.savefig(DIR_TEST + image_type+"-mser-"+str(year)+"%02d"%month+"%02d"%dd+"-i-0"+str(i)+".png", pad_inches=1)
-  i+=1
-  #if i == 3:
-
-#hulls = [cv2.convexHull(p.reshape(-1, 1, 2)) for p in regions]
-#isClosed = True  
-## Blue color in BGR 
-#color = (255, 0, 0) 
-## Line thickness of 2 px 
-#thickness = 1
-#cv2.polylines(vis, hulls,isClosed, color, thickness) 
-#f, ax = plt.subplots(1, 1, figsize=(11,8))
-#ax.imshow(vis)
-#ax.invert_yaxis()
+  if image_pollution[coord_y, coord_x] > 0:
+    #f, ax1 = plt.subplots(1, 1, figsize=(11,8))
+    ring_patch = PolygonPatch(poly0)
+    ax1.add_patch(ring_patch)
+    xrange1 = [0, current_region.shape[1]]
+    yrange1 = [0, current_region.shape[0]]
+    ax1.set_xlim(*xrange1)
+    ax1.set_ylim(*yrange1)
+    ax1.imshow(image_pollution, cmap="gray")
+    #f.savefig(DIR_TEST + "/05-03/" + image_type + "/" + image_type + "_bluereg_" + str(year) + "-" + str(month) + "-" + str(day) + "_deg_" + str(degree) + "_i_0" + str(i) + ".png", pad_inches=.01)
+    i += 10
 
 f, ax = plt.subplots(1, 1, figsize=(11,8))
-ax.imshow(image3)
+
+f3d = plt.figure(figsize=(11,8))
+ax3d = plt.axes(projection='3d')
+
+for r in r_pollution:
+  reg0 = list()
+  hull0 = cv2.convexHull(r)
+  for h0 in hull0:
+    reg0.append(h0[0].tolist())
+  reg0.append(reg0[0])
+
+  ring = LinearRing(reg0)
+  x, y = ring.xy
+
+  coord_x = int(ring.centroid.x)
+  coord_y = int(ring.centroid.y)
+
+  if image_pollution[coord_y, coord_x] > 0:
+    ax.plot(x, y)
+    xrange1 = [0, current_region.shape[1]]
+    yrange1 = [0, current_region.shape[0]]
+    ax.set_xlim(*xrange1)
+    ax.set_ylim(*yrange1)
+    ax.imshow(image_pollution, cmap="gray")
+
+    value_pixel = image_pollution[coord_y, coord_x]
+    print("value", value_pixel)
+
+    z = np.full(len(x),value_pixel)
+    # Data for a three-dimensional line
+    ax3d.plot3D(x, y, z)
+
+f, ax = plt.subplots(1, 1, figsize=(11,8))
+ax.imshow(image_close, cmap="gray")
 ax.invert_yaxis()
+
+f, ax = plt.subplots(1, 1, figsize=(11,8))
+ax.imshow(img_bgr, cmap="gray")
+ax.invert_yaxis()
+
+perspective = image_pollution.copy()
+
+# create the x and y coordinate arrays (here we just use pixel indices)
+xx, yy = np.mgrid[0:perspective.shape[0], 0:perspective.shape[1]]
+
+fig = plt.figure(figsize = (11,8))
+ax = Axes3D(fig, elev=30, azim=20)
+ax.plot_surface(xx, yy, perspective ,rstride=1, cstride=1, cmap='gray', linewidth=0)
+ax.invert_yaxis()
+
+
+
+
+
+
+
+
 
 ## test 28/03
 
@@ -668,8 +714,8 @@ for i in range(10,11):
         #bigger_points = ndimage.grey_dilation(colgrid, size=(3, 3), structure=np.ones((3, 3)))
         
         # Plot the original
-        fig1, (f1ax1) = plt.subplots(1, 1, figsize=(11,9))
-        f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='jet', vmin=colgrid.min(), vmax=colgrid.max())
+        fig1, (f1ax1) = plt.subplots(1, 1, figsize=(11,8))
+        f1ax1.pcolormesh(v_x, v_y, colgrid, shading='nearest',cmap='gray', vmin=colgrid.min(), vmax=colgrid.max())
 
 print(v_x.shape, v_x.max())
 print(v_y.shape, v_y.max())
