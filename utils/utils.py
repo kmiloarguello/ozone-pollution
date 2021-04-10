@@ -22,6 +22,7 @@ from scipy.spatial import distance
 from scipy import ndimage
 from shapely.geometry import Point, LineString, Polygon, MultiPoint
 from descartes import PolygonPatch
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 #from mpl_toolkits.basemap import Basemap,cm
 import tarfile
 import string
@@ -93,7 +94,7 @@ def plot_original_data(DIR, year, month, day, type_image, hasCoastLines=False):
                     m.drawparallels(np.r_[20:48:5], labels=[1,0,0,0], color='grey',fontsize=8,linewidth=0)
 
                 # ,cmap=plt.cm.Greys)
-                cs = plt.pcolor(long, latg, colgrid, vmin=7, vmax=30)
+                cs = plt.pcolor(long, latg, colgrid, vmin=7, vmax=30, cmap="jet")
                 c = plt.colorbar(cs)  # ,location='bottom',pad="10%")
                 c.set_label("[DU]", fontsize=10)
                 c.ax.tick_params(labelsize=8)
