@@ -5,3 +5,8 @@
 *.psd
 /__pycache__
 /Backup
+/IASIdata_May2008
+/.ipynb_checkpoints
+/__pycache__
+*/__pycache__
+/Ref
