@@ -993,7 +993,7 @@ imageLT = SplitImageLevels()
 imageLT.set_year(2008)
 imageLT.set_month(5)
 imageLT.set_day(6)
-imageLT.set_image_type("UT")
+imageLT.set_image_type("LT")
 imageLT.set_image_name("levels")
 imageLT.set_weight_gray_values(1)
 imageLT.set_cluster_value(30)
@@ -1055,7 +1055,7 @@ edge_blur_size	for color image, the aperture size for edge blur
 
 mser = cv2.MSER_create( 1, # delta 
                        100, # min_area
-                       24400, #max_area 
+                       34400, #max_area 
                        4., # max_variation 
                        .01, # min_diversity 
                        10000, # max_evolution 
@@ -1274,7 +1274,7 @@ for j,region in enumerate(global_regions[:]):
 
 kernel = np.ones((6,6), np.uint8)
 background  = cv2.morphologyEx(background, cv2.MORPH_DILATE, kernel)
-regx, regy, polys, lines, values = imageLT.set_mser_regions(t_i, background, global_regions[:])
+regx, regy, polys, lines, values = imageLT.set_mser_regions(t_i, background, regions[:])
 
 fig, ax = plt.subplots(1,1)
 xx_range = [0, image.shape[1]]
