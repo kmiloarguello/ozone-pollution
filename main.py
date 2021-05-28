@@ -53,6 +53,7 @@ import tarfile
 import string
 import calendar
 import cv2
+import random
 from google.colab.patches import cv2_imshow
 from mpl_toolkits.basemap import Basemap,cm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -62,6 +63,7 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import KMeans
 import seaborn as sns
 from scipy.signal import find_peaks
+from sklearn.metrics import confusion_matrix
 
 DIR_DATA = '/content/drive/MyDrive/StageUParis/DATA/H2O/'
 DIR_TRAIN = '/content/drive/MyDrive/StageUParis/DATA/LABELS/'
@@ -1009,31 +1011,67 @@ bgr , gray = imageLT.load_image_from_files(imageLT.get_image_name())
 
 image, foreground, background = imageLT.filter_image(gray)
 
-t_i = ma.masked_values(image, 0.)
-
-kernel = np.ones((1,1),np.uint8)
-#foreground = cv2.erode(foreground,kernel,iterations = 1)
-
+kernel = np.ones((3,3),np.uint8)
+foreground = cv2.dilate(foreground,kernel,iterations = 3)
 image1 = cv2.bitwise_and(image,image, mask=foreground)
 image2 = cv2.bitwise_and(image,image, mask=background)
 
-fig, (ax0) = plt.subplots(1,1)
-ax0.imshow(image1,cmap="gray")
-ax0.set_title('Morpho Operations - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
+myimage = cv2.cvtColor(image1, cv2.COLOR_GRAY2RGB)
+myimage = cv2.bitwise_and(myimage,myimage, mask=foreground)
+#t_i = cv2.normalize(image1, None, 0, 255, cv2.NORM_MINMAX )
+t_i = ma.masked_values(image1, 0.)
+#print(t_i[~t_i.mask])
+#mymask = t_i.mask
+#image3 = cv2.bitwise_and(image, image, mask=mymask)
+
+print(t_i.max(), t_i.min())
+
+fig, (ax0, ax1) = plt.subplots(1,2, figsize=(11,8))
+ax0.imshow(myimage)
+ax1.imshow(image1)
+#fig.title('Morpho Operations - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
 
 #ax1.imshow(background, cmap="gray")
 #ax2.imshow(image2)
 #ax3.imshow(foreground, cmap="gray")
 
-#mser = cv2.MSER_create(1, 100, 20000)
-#regions, bboxes = mser.detectRegions(image1)
+fig3, ax3 = plt.subplots(1,1)
+#ax3.hist(t_i.ravel(), bins=256, range=(0.0, 1.0), fc='k', ec='k')
+ax3.hist(t_i[~t_i.mask],256,[0,256], fc='k', ec='k')
+#ax3.hist(image1.ravel(),254,[1,256], fc='k', ec='k')
+fig3.show()
+
+"""
+delta	          it compares (sizei−sizei−delta)/sizei−delta
+min_area	      prune the area which smaller than minArea
+max_area	      prune the area which bigger than maxArea
+max_variation	  prune the area have similar size to its children
+min_diversity	  for color image, trace back to cut off mser with diversity less than min_diversity
+max_evolution	  for color image, the evolution steps
+area_threshold	for color image, the area threshold to cause re-initialize
+min_margin	    for color image, ignore too small margin
+edge_blur_size	for color image, the aperture size for edge blur
+"""
+
+mser = cv2.MSER_create( 1, # delta 
+                       100, # min_area
+                       24400, #max_area 
+                       4., # max_variation 
+                       .1, # min_diversity 
+                       2000, # max_evolution 
+                       1.01, # area_threshold 
+                       0.003, # min_margin
+                       5) # edge_blur_size
+
+# (1, 100, 20000, .25, 1., 1000, 1.001, 0.003, 5)
+#regions, bboxes = mser.detectRegions(myimage)
 #regions = sorted(regions, key=cv2.contourArea, reverse=True)
 
-regions, bboxes = imageLT.get_mser_regions(image)
+regions, bboxes = imageLT.get_mser_regions(image1, 100, 30000)
+#print(image1.shape)
+#print(len(regions))
 
-print(len(regions))
-
-img_mser = cv2.cvtColor(t_i, cv2.COLOR_GRAY2RGB)
+img_mser = cv2.cvtColor(image1, cv2.COLOR_GRAY2RGB)
 
 for p in regions[:]:
   for k in p:
@@ -1114,6 +1152,11 @@ for j,region_front in enumerate(regions[:]):
   ax.set_xlim(*xx_range)
   ax.set_ylim(*yy_range)
   ax.invert_yaxis()
+
+kernel = np.ones((6,6), np.uint8)
+background  = cv2.morphologyEx(background, cv2.MORPH_DILATE, kernel)
+regx, regy, polys, lines, values = imageLT.set_mser_regions(t_i, background, regions[:])
+imageLT.plot_mser_final_regions(t_i, regx, regy, values)
 
 gray_temp = gray.copy()
 gray_temp = ma.masked_values(gray_temp, 0.)
@@ -1256,6 +1299,8 @@ for p in polys:
 
 imageLT.plot_mser_final_regions(t_i, regx, regy, values)
 
+len(polys)
+
 filename = imageLT.export_mser_regions(image, regx, regy, values)
 image_flat = io.imread(filename)
 image_color = image_flat.copy()
@@ -1264,9 +1309,132 @@ image_flat = np.where(image_flat == 255, 0, image_flat)
 #image_flat = np.where(image_flat == 255, 254, image_flat)
 
 f1, ax1 = plt.subplots(1,1)
+xx_range = [0, image.shape[1]]
+yy_range = [0, image.shape[0]]
+
+#for p in polys:
+#  x,y = p.exterior.xy
+
+#  ax1.plot(x,y)
+#  ax1.set_xlim(*xx_range)
+#  ax1.set_ylim(*yy_range)
+#  ax1.invert_yaxis()
+
 ax1.imshow(image_flat, cmap="gray")
 ax1.set_title('Projected gray level- IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
 f1.show()
+
+class Pointi(object):
+    def __init__(self,x,y):
+        self.x = x
+        self.y = y
+ 
+    def getX(self):
+        return self.x
+    def getY(self):
+        return self.y
+ 
+def getGrayDiff(img,currentPoint,tmpPoint):
+    return abs(int(img[currentPoint.x,currentPoint.y]) - int(img[tmpPoint.x,tmpPoint.y]))
+ 
+def selectConnects(p):
+    if p != 0:
+        connects = [Pointi(-1, -1), Pointi(0, -1), Pointi(1, -1), Pointi(1, 0), Pointi(1, 1), \
+                    Pointi(0, 1), Pointi(-1, 1), Pointi(-1, 0)]
+    else:
+        connects = [ Pointi(0, -1),  Pointi(1, 0),Pointi(0, 1), Pointi(-1, 0)]
+    return connects
+ 
+def regionGrow(img,seeds,thresh,p = 1):
+    height, weight = img.shape
+    seedMark = np.zeros(img.shape)
+    seedList = []
+    for seed in seeds:
+        seedList.append(seed)
+    label = 1
+    connects = selectConnects(p)
+    while(len(seedList)>0):
+        currentPoint = seedList.pop(0)
+        seedMark[currentPoint.x,currentPoint.y] = label
+        for i in range(8):
+            tmpX = currentPoint.x + connects[i].x
+            tmpY = currentPoint.y + connects[i].y
+            if tmpX < 0 or tmpY < 0 or tmpX >= height or tmpY >= weight:
+                continue
+            grayDiff = getGrayDiff(img,currentPoint,Pointi(tmpX,tmpY))
+            if grayDiff < thresh and seedMark[tmpX,tmpY] == 0:
+                seedMark[tmpX,tmpY] = label
+                seedList.append(Pointi(tmpX,tmpY))
+    return seedMark
+
+"""
+components = [1..8]
+for val in components:
+"""
+
+_labels = ndimage.label(image_flat)
+labels_comp = _labels[0]
+num_regions_comp = _labels[1]
+print("# regions",num_regions_comp)
+
+# get contours (presumably just one around the nonzero pixels) 
+contours = cv2.findContours(image_flat, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+contours = contours[0] if len(contours) == 2 else contours[1]
+
+print("# contours",len(contours))
+
+polys_comp = list()
+for contour in contours:
+  myContour = list()
+  for point in contour:
+    myContour.append(point[0].tolist())
+  polys_comp.append(Polygon(myContour))
+
+fig3,ax3 = plt.subplots(1,1)
+img_c = np.zeros(image_flat.shape, np.uint8)
+img_c = cv2.cvtColor(img_c, cv2.COLOR_GRAY2RGB)
+cv2.drawContours(img_c, contours, -1, (0,255,0), 3)
+
+def getPoints(poly,image):
+  """
+  To avoid getting a coordinate when the pixel value is 0
+  """
+  xmin, ymin, xmax, ymax = poly.bounds
+  _x, _y = 0., 0.
+
+  while True:
+    _x = random.uniform(xmin, xmax)
+    _y = random.uniform(ymin, ymax)
+
+    if poly.contains(Point(int(_x),int(_y))):
+      # if this condition is true, add to a dataframe here
+      if image[int(_y),int(_x)] == 0:
+        print("DO IT AGAIN",_x, _y)
+        getPoints(poly,image)
+        return 0.
+      break
+  return Pointi(int(_y),int(_x))
+
+centroids = list()
+for i,poly in enumerate(polys_comp):
+  if poly.area > 500.:
+    x,y = poly.centroid.x, poly.centroid.y
+    if image_flat[int(y),int(x)] == 0:
+      point_to_search = getPoints(poly,image_flat)
+    else:
+      point_to_search = Pointi(int(y),int(x))
+
+    centroids.append(point_to_search) 
+    ax3.imshow(img_c)
+    ax3.scatter([point_to_search.y],[point_to_search.x], c="white")
+
+#seeds = [Point3(140,10)]#,Point(82,150),Point(200,280)]
+binaryImg = regionGrow(image_flat,centroids,30)
+
+fig, (ax1,ax2) = plt.subplots(1,2,figsize=(11,8))
+ax1.imshow(binaryImg, cmap="gray")
+###ax1.scatter([x],[y])
+ax2.imshow(image_flat, cmap="gray")
 
 # Make bins
 bins = np.arange(image_flat.min() + 1, 254)
@@ -1307,13 +1475,20 @@ fig0.show()
 _labels = ndimage.label(black_image)
 
 lbl = _labels[0]
+num_regions = _labels[1]
 
 valuesNorm = (values - min(values)) / (max(values) - min(values))
-num_regions = _labels[1]
 
 # Center of mass of each region
 centers = ndimage.measurements.center_of_mass(black_image, lbl, np.arange(1,num_regions))
 print(len(centers), len(valuesNorm), num_regions)
+
+fig0, (ax0,ax1) = plt.subplots(1,2, figsize=(11,8))
+ax0.imshow(black_image, cmap="gray")
+ax1.imshow(lbl, cmap='nipy_spectral')
+#ax1.scatter([myX], [myY], c="white")
+ax1.set_title("Regions rebuilt number " + str(num_regions))
+fig0.show()
 
 image_regs_kms = image_flat.copy()
 
@@ -1326,7 +1501,7 @@ for i,row in enumerate(image_3[:]):
     _x = i / image_3.shape[1]
     _y = j / image_3.shape[0]
     _g = col
-    image_norm.append(np.array([_x,_y,_g]))
+    image_norm.append(np.array([_g]))
 
 image_norm_array = np.asarray(image_norm)
 image_norm_array = np.float32(image_norm_array)
@@ -1364,17 +1539,362 @@ print(segmented_data.shape, segmented_data_1.shape)
 
 # reshape data into the original image dimensions
 segmented_image = segmented_data.reshape((image_regs_kms.shape))
+segmented_image = segmented_image.astype(np.uint8)
 
-image_color = cv2.cvtColor(image_flat , cv2.COLOR_GRAY2RGB)
-segmented_image_2 = segmented_data_1.reshape(image_color.shape)
+#image_color = cv2.cvtColor(image_flat , cv2.COLOR_GRAY2RGB)
+#segmented_image_2 = segmented_data_1.reshape(image_color.shape)
 
-plt.imshow(segmented_image_2, cmap="jet")
+plt.imshow(segmented_image, cmap="jet")
 plt.title('CLUSTERS - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
 plt.show()
 
+s_i = segmented_image.copy()
+s_i = ma.masked_values(s_i, 0.)
+
+grays_level_predicted = list() # list of all gray levels needed as cluster
+
+for i,val in enumerate(s_i):
+  row = list(set(val.tolist())) # to get onique values from list
+  for v in row:
+    if v is not None and v not in grays_level_predicted:
+      grays_level_predicted.append(v)
+
+grays_level_predicted.sort()
+print(grays_level_predicted)
+
+#for cluster in grays_level_predicted[:len(grays_level_predicted) - 3]:
+#  s_i[s_i == cluster] = 0
+#s_i = ma.masked_values(s_i, 0.)
+
+plt.imshow(s_i)
+
+c_i = s_i.copy()
+g_l = grays_level_predicted.copy()
+
+all_contours_regions = list()
+all_content_regions = list()
+
+for k in range(len(g_l)):
+  tmp = c_i.copy()
+  black = np.zeros(c_i.shape, np.uint8)
+  for i in range(len(g_l)):
+    if i is k:
+      #black = np.where(tmp == g_l[i], 255, black) 
+      #print(black.shape)
+      black = np.where(tmp == g_l[i], 255, black) 
+      #black[tmp == g_l[i]] = 1
+    if i is not k:
+      tmp[tmp == g_l[i]] = 0
+  all_content_regions.append(black)
+  tmp = ma.masked_values(tmp, 0.)
+  contours, _ = cv2.findContours(tmp, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+  all_contours_regions.append(contours)
+  
+fig3,ax3 = plt.subplots(1,1)
+img_c = np.zeros(c_i.shape, np.uint8)
+img_c = cv2.cvtColor(img_c, cv2.COLOR_GRAY2RGB)
+
+print(len(all_contours_regions),len(all_content_regions))
+
+for i, cont in enumerate(all_contours_regions):
+  cv2.drawContours(img_c, cont, -1, (0,0,255), 3)
+  ax3.imshow(img_c)
+
+f,x = plt.subplots(1,1)
+for a in all_content_regions[:]:
+  a = ma.masked_values(a, 0.)
+  x.imshow(a)
+
+all_polys_regions = list()
+all_points_regions = list()
+for i,contours in enumerate(all_contours_regions[:]):
+  polys_regions = list()
+  points_regions = list()
+  for contour in contours:
+    if len(contour) > 2:
+      myContour = list()
+      for point in contour:
+        myContour.append(point[0].tolist())
+      polys_regions.append(Polygon(myContour))
+      points_regions.append(MultiPoint(myContour))
+
+  all_polys_regions.append(polys_regions)
+  all_points_regions.append(points_regions)
+
+print(len(all_polys_regions))
+
+fig, ax = plt.subplots(1,1)
+
+xx_range = [0, c_i.shape[1]]
+yy_range = [0, c_i.shape[0]]
+
+for polys in all_polys_regions:
+  for poly in polys:
+    x,y = poly.exterior.xy
+
+    ax.plot(x,y)
+    ax.set_xlim(*xx_range)
+    ax.set_ylim(*yy_range)
+    ax.invert_yaxis()
+
+def print_confussion_matrix_results(cnf_matrix):
+  FP = cnf_matrix.sum(axis=0) - np.diag(cnf_matrix)  
+  FN = cnf_matrix.sum(axis=1) - np.diag(cnf_matrix)
+  TP = np.diag(cnf_matrix)
+  TN = cnf_matrix.sum() - (FP + FN + TP)
+
+  FP = FP.astype(float)
+  FN = FN.astype(float)
+  TP = TP.astype(float)
+  TN = TN.astype(float)
+
+  # Sensitivity, hit rate, recall, or true positive rate
+  TPR = TP/(TP+FN)
+  # Specificity or true negative rate
+  TNR = TN/(TN+FP) 
+  # Precision or positive predictive value
+  PPV = TP/(TP+FP)
+  # Negative predictive value
+  NPV = TN/(TN+FN)
+  # Fall out or false positive rate
+  FPR = FP/(FP+TN)
+  # False negative rate
+  FNR = FN/(TP+FN)
+  # False discovery rate
+  FDR = FP/(TP+FP)
+  # Overall accuracy
+  ACC = (TP+TN)/(TP+FP+FN+TN)
+
+  print("TPR:",TPR,"PPV:",PPV,"NPV:",NPV,"FPR",FPR,"FNR",FNR,"FDR",FDR,"ACC",ACC)
+
+directories = os.listdir( imageLT.get_DIR_TRAIN() )
+ 
+# This would print all the files and directories
+for file in directories:
+  only_png_files = re.search(".jpg", file)
+  if only_png_files is not None:
+    only_same_day = re.search(str(imageLT.get_year())+"%02d"%imageLT.get_month()+"%02d"%imageLT.get_day(), file)
+    if only_same_day is not None:
+      only_image_type = re.search(imageLT.get_image_type(), file)
+      if only_image_type is not None:
+        img = io.imread(imageLT.get_DIR_TRAIN() + file)
+        #img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
+        img_hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        #img_gray = ma.masked_values(img_gray, 255.)
+        img_gray = cv2.GaussianBlur(img_gray,(5,5),cv2.BORDER_DEFAULT)
+
+        best_regions = list()
+
+        for region_ in all_content_regions:
+          im_orig = region_.copy()
+          im_bin = img_gray.copy()
+
+          im_orig = cv2.normalize(im_orig, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+          im_bin = cv2.normalize(im_bin, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+          
+          #X_test = im_orig.reshape((-1, 1)).tolist()
+          #X_test = np.float32(X_test)
+
+          #y_test = im_bin.reshape((-1, 1)).tolist()
+          #y_test = np.float32(y_test)
+
+          #conf_matrix = metrics.confusion_matrix(y_test, X_test)
+          #print(metrics.classification_report(y_test, X_test))
+          #print_confussion_matrix_results(conf_matrix)
+          
+          # compute the error image between im_bin and im_orig (the ideal solution) using np.abs and np.sum 
+          # PORCENTAJE DE PIXELES DENTRO Y FUERA DE LA FIGURA VERITE TERRAIN
+          true_positives = 0
+          false_positives = 0
+          false_negatives = 0
+          true_negatives = 0
+          
+          for i,x in enumerate(im_bin[:]):
+            for j,y in enumerate(x[:]):
+              if y == 1:
+                if im_orig[i][j] == 1:
+                  # True positive
+                  true_positives += 1
+                else:
+                  false_negatives += 1
+              else:
+                if im_orig[i][j] == 1:
+                  # False positives
+                  false_positives += 1
+                else:
+                  true_negatives += 1
+              
+
+          print("pixels: true_positives", true_positives)
+          print("pixels: false_positives",false_positives)
+          print("pixels: false_negatives",false_negatives)
+          print("pixels: true_negatives",true_negatives)
+          print("\n")
+          total_pixels_blancs_ref = len(im_bin[im_bin == 1])
+          total_pixels_blancs_test = len(im_orig[im_orig == 1])
+          print("total_pixels_blancs_ref", total_pixels_blancs_ref)
+          print("total_pixels_blancs_test", total_pixels_blancs_test)
+          print("\n")
+          print("perc: true_positives", int(true_positives * 100 / total_pixels_blancs_test), "%")
+          print("perc: false_positives", int(false_positives * 100 / total_pixels_blancs_test), "%")
+          print("perc: false_negatives", int(false_negatives * 100 / total_pixels_blancs_ref), "%")
+
+          if int(true_positives * 100 / total_pixels_blancs_test) >= 30:
+            best_regions.append(im_orig)
+
+          error = np.sum(np.abs(im_orig - im_bin))
+
+          # visualize the differences between the original image and the solution
+          plt.figure()
+          plt.title('Ground Truth and Regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
+          plt.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
+          plt.show()
+
+fig, axx = plt.subplots(1,1)
+
+black_image = np.zeros(best_regions[0].shape, np.uint8)
+
+for reg in best_regions[:]:
+  tmp = ma.masked_values(reg, 0.)
+  for i,x in enumerate(tmp[:]):
+    for j,y in enumerate(x):
+      if isinstance(y, np.uint8):
+        black_image[i][j] = 1
+
+axx.imshow(black_image, cmap="gray")
+
+final_image = cv2.bitwise_and(gray, gray, mask=black_image)
+plt.imshow(final_image, cmap="nipy_spectral")
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#l_r = np.array([0,100,0])
+        #u_r = np.array([5,255,255])
+
+        #l_r = np.array([36,0,0])
+        #u_r = np.array([86,255,255])
+
+        #l_r = np.array([20, 100, 100])
+        #u_r = np.array([30, 255, 255])
+
+        #Define threshold color range to filter
+        #mask_red = cv2.inRange(img_hsv, l_r, u_r)
+
+        # Bitwise-AND mask and original image
+        #res = cv2.bitwise_and(img_hsv, img_hsv, mask=mask_red)
+        #ratio = cv2.countNonZero(mask_red)/(img_hsv.size/3)
+        #print('pixel percentage:', np.round(ratio*100, 2))
+        #pollution = cv2.bitwise_and(img, img, mask=mask_red)
+
+        #xs = [pnt[0] if background[pnt[1],pnt[0]] != 255 else np.nan for pnt in r[:]]
+        #ys = [pnt[1] if background[pnt[1],pnt[0]] != 255 else np.nan for pnt in r[:]]
+
+        contours, _ = cv2.findContours(img_gray, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+      
+        polys_ref = list()
+        #hulls_ref = list()
+        for contour in contours:
+          if len(contour) > 2:
+            myContour = list()
+            for point in contour:
+              myContour.append(point[0].tolist())
+            polys_ref.append(Polygon(myContour))
+        #    hulls_ref.append(cv2.convexHull(contour))
+        #region = list()
+        #for hull in hulls_ref:
+        #  for h in hull:
+        #    region.append(h[0].tolist())
+        #  region.append(region[0])
+        #  poly_hull = Polygon(region)
+
+        #fig3,ax3 = plt.subplots(1,1)
+        #img_c = np.zeros(img_gray.shape, np.uint8)
+        #img_c = cv2.cvtColor(img_c, cv2.COLOR_GRAY2RGB)
+        #cv2.drawContours(img_c, contours, -1, (255,0,0), 3)
+        #ax3.imshow(img_c)
+        x_range = [0, img.shape[1]]
+        y_range = [0, img.shape[0]]
+
+        fig, ax = plt.subplots(1,1)
+        fig2 = plt.figure()
+
+        for a,poly_ref in enumerate(polys_ref):
+          if poly_ref.area >= 100.:
+            y_true = poly_ref
+
+            for inte in y_true.interiors:
+              print(inte)
+
+            for i,polys in enumerate(all_polys_regions):
+              for j,poly_front in enumerate(polys[:1]):
+                if poly_front.area > 0:
+                  y_predict = poly_front
+                  if y_true.intersects(all_points_regions[i][j]):
+
+                    #y_true.contains()
+                    #print(y_predict)
+                    #print("REF",poly_ref)
+                    #print("\n")
+                    #print("FOUND",poly_front)
+                    #break
+                    #cnf_matrix = confusion_matrix(poly_ref, poly_front)
+
+                    #percentage = (poly_front.intersection(poly_hull).area/poly_front.area) * 100
+                    #print("percentage", percentage)
+                    
+                    x,y = poly_front.exterior.xy
+                    x2,y2 = poly_ref.exterior.xy
+                    ax.plot(x,y, color="green")
+                    ax.plot(x2,y2, color="red")
+                    ax.set_xlim(*x_range)
+                    ax.set_ylim(*y_range)
+                    ax.invert_yaxis()
+
+                    ax1 = fig2.add_subplot(111)
+                    ring_patch = PolygonPatch(poly_front)
+                    ax1.add_patch(ring_patch)
+                    ax1.set_xlim(*x_range)
+                    ax1.set_ylim(*y_range)
+                    ax1.invert_yaxis()
+        #fig2, ax2 = plt.subplots(1,1)
+        #for j,r in enumerate(regions_target):
+        #  region = list()
+        #  hull = cv2.convexHull(r)
+
+        #  for h in hull:
+        #      region.append(h[0].tolist())
+
+        #  region.append(region[0])
+        #  poly_target = Polygon(region)
+        #  line = LineString(region)
+        #  x,y = line.xy
+
+        #  #my_line = lines[i]
+        #  #_x,_y = my_line.xy
+        #  ax2.plot(x,y, color="yellow")
+        #  #ax2.scatter(regx[i], regy[i], marker='.',color=cmap(norm(values[i])))
+        #  ax2.set_xlim(*x_range)
+        #  ax2.set_ylim(*y_range)
+        #  ax2.invert_yaxis()
 
 
 
@@ -1566,6 +2086,86 @@ clustering = KMeans(n_clusters=5, max_iter=300)
 #clustering.fit(coordinatesArray)
 clustering.fit(image_flat_x)
 
+directories = os.listdir( imageLT.get_DIR_TRAIN() )
+ 
+# This would print all the files and directories
+for file in directories:
+  only_png_files = re.search(".jpg", file)
+  if only_png_files is not None:
+    only_same_day = re.search(str(imageLT.get_year())+"%02d"%imageLT.get_month()+"%02d"%imageLT.get_day(), file)
+    if only_same_day is not None:
+      only_image_type = re.search(imageLT.get_image_type(), file)
+      if only_image_type is not None:
+        img = io.imread(imageLT.get_DIR_TRAIN() + file)
+        #img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
+        img_hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        #img_gray = ma.masked_values(img_gray, 255.)
+        img_gray = cv2.GaussianBlur(img_gray,(5,5),cv2.BORDER_DEFAULT)
+
+        im_orig = all_content_regions[9].copy()
+        im_bin = img_gray.copy()
+
+        im_orig = cv2.normalize(im_orig, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        im_bin = cv2.normalize(im_bin, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        
+        from sklearn import metrics, neighbors
+
+        X_test = im_orig.reshape((-1, 1)).tolist()
+        #X_test = np.float32(X_test)
+
+        y_test = im_bin.reshape((-1, 1)).tolist()
+        #y_test = np.float32(y_test)
+
+        conf_matrix = metrics.confusion_matrix(y_test, X_test)
+        #print(metrics.classification_report(y_test, X_test))
+        #print_confussion_matrix_results(conf_matrix)
+        
+        # compute the error image between im_bin and im_orig (the ideal solution) using np.abs and np.sum 
+        # PORCENTAJE DE PIXELES DENTRO Y FUERA DE LA FIGURA VERITE TERRAIN
+        true_positives = 0
+        false_positives = 0
+        false_negatives = 0
+        true_negatives = 0
+        
+        for i,x in enumerate(im_bin[:]):
+          for j,y in enumerate(x[:]):
+            if y == 1:
+              if im_orig[i][j] == 1:
+                # True positive
+                true_positives += 1
+              else:
+                false_negatives += 1
+            else:
+              if im_orig[i][j] == 1:
+                # False positives
+                false_positives += 1
+              else:
+                true_negatives += 1
+            
+
+        print("pixels: true_positives", true_positives)
+        print("pixels: false_positives",false_positives)
+        print("pixels: false_negatives",false_negatives)
+        print("pixels: true_negatives",true_negatives)
+        print("\n")
+        total_pixels_blancs_ref = len(im_bin[im_bin == 1])
+        total_pixels_blancs_test = len(im_orig[im_orig == 1])
+        print("total_pixels_blancs_ref", total_pixels_blancs_ref)
+        print("total_pixels_blancs_test", total_pixels_blancs_test)
+        print("\n")
+        print("perc: true_positives", int(true_positives * 100 / total_pixels_blancs_test), "%")
+        print("perc: false_positives", int(false_positives * 100 / total_pixels_blancs_test), "%")
+        print("perc: false_negatives", int(false_negatives * 100 / total_pixels_blancs_ref), "%")
+
+        error = np.sum(np.abs(im_orig - im_bin))
+
+        # visualize the differences between the original image and the solution
+        plt.figure()
+        plt.title('Ground Truth and Regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
+        plt.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
+        plt.show()
+
 #colors = sns.color_palette("YlOrBr_r", max(clustering.labels_) + 1)
 
 #cmap = matplotlib.colors.ListedColormap(colors)
@@ -1662,99 +2262,6 @@ clustering.fit(image_flat_x)
 
 
 
-
-directories = os.listdir( imageLT.get_DIR_TRAIN() )
- 
-# This would print all the files and directories
-for file in directories:
-  only_png_files = re.search(".png", file)
-  if only_png_files is not None:
-    only_same_day = re.search(str(imageLT.get_year())+"%02d"%imageLT.get_month()+"%02d"%imageLT.get_day(), file)
-    if only_same_day is not None:
-      only_image_type = re.search(imageLT.get_image_type(), file)
-      if only_image_type is not None:
-        img = io.imread(imageLT.get_DIR_TRAIN() + file)
-        img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
-        img_hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-
-        #l_r = np.array([0,100,0])
-        #u_r = np.array([5,255,255])
-
-        l_r = np.array([36,0,0])
-        u_r = np.array([86,255,255])
-
-        #l_r = np.array([20, 100, 100])
-        #u_r = np.array([30, 255, 255])
-
-        #Define threshold color range to filter
-        mask_red = cv2.inRange(img_hsv, l_r, u_r)
-
-        # Bitwise-AND mask and original image
-        res = cv2.bitwise_and(img_hsv, img_hsv, mask=mask_red)
-        ratio = cv2.countNonZero(mask_red)/(img_hsv.size/3)
-        print('pixel percentage:', np.round(ratio*100, 2))
-
-        pollution = cv2.bitwise_and(img, img, mask=mask_red)
-
-        mser = cv2.MSER_create(1, 100, 50000, .25, 1., 1000, 1.001, 0.003, 5)
-        regions_target, bboxes = mser.detectRegions(pollution)
-        regions_target = sorted(regions_target, key=cv2.contourArea, reverse=True)
-
-        x_range = [0, image.shape[1]]
-        y_range = [0, image.shape[0]]
-
-        #fig, ax = plt.subplots(1,1)
-
-        fig2, ax2 = plt.subplots(1,1)
-       
-        for j,r in enumerate(regions_target):
-          region = list()
-          hull = cv2.convexHull(r)
-
-          for h in hull:
-              region.append(h[0].tolist())
-
-          region.append(region[0])
-          poly_target = Polygon(region)
-          line = LineString(region)
-          x,y = line.xy
-
-          #image = cv2.normalize(image, np.ones((image.shape[0], image.shape[0])) , self.vmin, self.vmax, cv2.NORM_MINMAX )
-
-          for i,poly in enumerate(polys[:]): 
-            if poly is None:
-              continue 
-
-            #for j,ut in enumerate(ut_polys[:]):
-            if poly_target.intersects(poly):
-              percentage = (poly_target.intersection(poly).area/poly_target.area) * 100
-
-              if percentage > 99:
-                value_poly_1 =  imageLT.get_region_value(image, poly_target)
-                value_poly_n =  imageLT.get_region_value(image, poly)
-
-                if np.abs(value_poly_1 - value_poly_n) < 10:
-
-                  if imageLT.image_type == 'LT':
-                    max_color_value = 35
-                  else:
-                    max_color_value = 45
-                  
-                  colors = sns.color_palette("YlOrBr", max_color_value + 1)
-                  cmap = matplotlib.colors.ListedColormap(colors)
-                  norm = matplotlib.colors.BoundaryNorm(np.arange(max_color_value + 1) - 0.5, cmap.N)
-
-                  my_line = lines[i]
-                  _x,_y = my_line.xy
-                  ax2.plot(x,y, color="yellow")
-                  ax2.scatter(regx[i], regy[i], marker='.',color=cmap(norm(values[i])))
-                  ax2.set_xlim(*x_range)
-                  ax2.set_ylim(*y_range)
-                  ax2.invert_yaxis()
-
-                #  temp_polygons[i] = None
-          
-        #imageLT.show_image(target_image)
 
 #img = io.imread("testca.png")
 #img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
