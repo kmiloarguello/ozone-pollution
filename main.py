@@ -992,8 +992,8 @@ imageLT = SplitImageLevels()
 
 imageLT.set_year(2008)
 imageLT.set_month(5)
-imageLT.set_day(4)
-imageLT.set_image_type("LT")
+imageLT.set_day(6)
+imageLT.set_image_type("UT")
 imageLT.set_image_name("levels")
 imageLT.set_weight_gray_values(1)
 imageLT.set_cluster_value(30)
@@ -1028,7 +1028,7 @@ print(t_i.max(), t_i.min())
 
 fig, (ax0, ax1) = plt.subplots(1,2, figsize=(11,8))
 ax0.imshow(myimage)
-ax1.imshow(image1)
+ax1.imshow(foreground)
 #fig.title('Morpho Operations - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
 
 #ax1.imshow(background, cmap="gray")
@@ -1057,19 +1057,19 @@ mser = cv2.MSER_create( 1, # delta
                        100, # min_area
                        24400, #max_area 
                        4., # max_variation 
-                       .1, # min_diversity 
-                       2000, # max_evolution 
-                       1.01, # area_threshold 
+                       .01, # min_diversity 
+                       10000, # max_evolution 
+                       1.04, # area_threshold 
                        0.003, # min_margin
                        5) # edge_blur_size
 
 # (1, 100, 20000, .25, 1., 1000, 1.001, 0.003, 5)
-#regions, bboxes = mser.detectRegions(myimage)
-#regions = sorted(regions, key=cv2.contourArea, reverse=True)
+regions, bboxes = mser.detectRegions(myimage)
+regions = sorted(regions, key=cv2.contourArea, reverse=True)
 
-regions, bboxes = imageLT.get_mser_regions(image1, 100, 30000)
+#regions, bboxes = imageLT.get_mser_regions(image1, 100, 30000)
 #print(image1.shape)
-#print(len(regions))
+print(len(regions))
 
 img_mser = cv2.cvtColor(image1, cv2.COLOR_GRAY2RGB)
 
@@ -1094,7 +1094,7 @@ for contour in contours:
 #back_polygons = Polygon(myConts)
 #print(back_polygons.exterior.xy)
 
-cnt = contours[4]
+#cnt = contours[4]
 img_c = cv2.cvtColor(t_i, cv2.COLOR_GRAY2RGB)
 #cv2.drawContours(img_c, [cnt], 0, (0,255,0), 3)
 cv2.drawContours(img_c, contours, -1, (0,255,0), 3)
@@ -1685,6 +1685,7 @@ for file in directories:
         img_gray = cv2.GaussianBlur(img_gray,(5,5),cv2.BORDER_DEFAULT)
 
         best_regions = list()
+        worst_regions = list()
 
         for region_ in all_content_regions:
           im_orig = region_.copy()
@@ -1742,6 +1743,8 @@ for file in directories:
 
           if int(true_positives * 100 / total_pixels_blancs_test) >= 30:
             best_regions.append(im_orig)
+          else:
+            worst_regions.append(im_orig)
 
           error = np.sum(np.abs(im_orig - im_bin))
 
@@ -1751,18 +1754,30 @@ for file in directories:
           plt.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
           plt.show()
 
-fig, axx = plt.subplots(1,1)
+fig, (axx, axx2) = plt.subplots(1,2)
 
-black_image = np.zeros(best_regions[0].shape, np.uint8)
+black_image_best = np.zeros(best_regions[0].shape, np.uint8)
+black_image_worst = np.zeros(worst_regions[0].shape, np.uint8)
 
 for reg in best_regions[:]:
   tmp = ma.masked_values(reg, 0.)
   for i,x in enumerate(tmp[:]):
     for j,y in enumerate(x):
       if isinstance(y, np.uint8):
-        black_image[i][j] = 1
+        black_image_best[i][j] = 1
 
-axx.imshow(black_image, cmap="gray")
+for reg in worst_regions[:]:
+  tmp = ma.masked_values(reg, 0.)
+  for i,x in enumerate(tmp[:]):
+    for j,y in enumerate(x):
+      if isinstance(y, np.uint8):
+        black_image_worst[i][j] = 1
+
+
+axx.imshow(black_image_best, cmap="gray")
+axx.set_title('Best regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
+axx2.imshow(black_image_worst, cmap="gray")
+axx2.set_title('Worst regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
 
 final_image = cv2.bitwise_and(gray, gray, mask=black_image)
 plt.imshow(final_image, cmap="nipy_spectral")
