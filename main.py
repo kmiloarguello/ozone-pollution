@@ -1282,8 +1282,9 @@ yy_range = [0, image.shape[0]]
 
 fig2 = plt.figure()
 
-for p in polys:
+for p in polys[:]:
   x,y = p.exterior.xy
+
 
   ax.plot(x,y)
   ax.set_xlim(*xx_range)
