@@ -1088,7 +1088,6 @@ xx_range = [0, image.shape[1]]
 yy_range = [0, image.shape[0]]
 
 for j,poly in enumerate(polys[:]):
-  
   xxx,yyy = poly.exterior.xy
 
   ax.plot(xxx,yyy)
@@ -1096,29 +1095,157 @@ for j,poly in enumerate(polys[:]):
   ax.set_ylim(*yy_range)
   ax.invert_yaxis()
 
-
-
-rx_test = regx.copy()
-ry_test = regy.copy()
-val_test = values.copy()
-
-labels = sns.color_palette("Paired", len(values[:10]))
-
-b_i = np.zeros([image.shape[1],image.shape[0],3], np.uint16)
-
-#for i,x in enumerate(b_i[:1]):
-#  for j,y in enumerate(x):
-#    for k, label in enumerate(labels):
-#      b_i[i][j] = np.array()
-
-
-
 filename = imageLT.export_mser_regions(image, regx, regy, values)
 image_flat = io.imread(filename)
 image_color = image_flat.copy()
 image_flat = cv2.cvtColor(image_flat, cv2.COLOR_RGBA2GRAY)
 image_flat = np.where(image_flat == 255, 0, image_flat) 
 #image_flat = np.where(image_flat == 255, 254, image_flat)
+
+rx_test = regx.copy()
+ry_test = regy.copy()
+val_test = values.copy()
+my_polys = polys.copy()
+ima_test = image_flat.copy()
+my_regs = regions.copy()
+
+labels = sns.color_palette("Paired", len(values[:10]))
+
+b_i = np.zeros(image.shape, np.uint8)
+
+ret,thresh1 = cv2.threshold(ima_test,250,255,cv2.THRESH_BINARY)
+contours = cv2.findContours(thresh1, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+contours = contours[0] if len(contours) == 2 else contours[1]
+print("# contours",len(contours))
+
+polys_comp_1 = list()
+for contour in contours:
+  myContour = list()
+  for point in contour:
+    myContour.append(point[0].tolist())
+  polys_comp_1.append(Polygon(myContour))
+
+#fig, ax = plt.subplots(1,1)
+fig2, ax2 = plt.subplots(1,1)
+fig3, (ax3,ax4) = plt.subplots(1,2, figsize=(21,15))
+xx_range = [0, image.shape[1]]
+yy_range = [0, image.shape[0]]
+
+for poly_thresh in polys_comp_1:
+  ids_regions = list()
+  for i,poly in enumerate(my_polys[:]):
+    if poly_thresh.intersects(poly):
+      ids_regions.append(i)
+      #xxx,yyy = poly.exterior.xy
+      #ax.plot(xxx,yyy)
+      #ax.set_xlim(*xx_range)
+      #ax.set_ylim(*yy_range)
+      #ax.invert_yaxis()
+
+      ax2.scatter(rx_test[i],ry_test[i])
+      ax2.set_xlim(*xx_range)
+      ax2.set_ylim(*yy_range)
+      ax2.invert_yaxis()
+
+ids_sort = ids_regions.copy()
+ids_sort.sort(reverse=True)
+
+values_sort = list()
+for i in ids_sort:
+  values_sort.append(val_test[i])
+
+#set_regions = list()
+# _i current
+# i next
+current = 0
+b1 = False
+b2 = False
+
+tmp = np.zeros(image.shape, np.uint8)
+
+for i,id in enumerate(ids_sort):
+  if i == (len(ids_sort) - 2):
+    break
+
+  cr = my_regs[ids_sort[i]]
+  nr = my_regs[ids_sort[i + 1]]
+  
+  for k in cr:
+    if b_i[k[1]][k[0]] == 0 and tmp[k[1]][k[0]] == 0:
+      b_i[k[1]][k[0]] = 1
+      tmp[k[1]][k[0]] = 1
+      b_i1 = cv2.morphologyEx(b_i, cv2.MORPH_ERODE, np.ones((6,6),np.uint8))
+
+  for k in nr:
+    if b_i[k[1]][k[0]] == 0 and tmp[k[1]][k[0]] == 0:
+      b_i1[k[1]][k[0]] = 1
+      tmp[k[1]][k[0]] = 1
+
+  tmp = cv2.morphologyEx(tmp, cv2.MORPH_DILATE, np.ones((2,2),np.uint8))
+  b_i = b_i1.copy()
+
+  print("ids", id)
+  ## ACA ITERO SOBRE LOS PUNTOS XyY DE UNA REGION
+  #for k in my_regs[id]:
+  #  
+  #  if i == current:
+  #    b_i[k[1]][k[0]] = 1
+  #    b_i1 = cv2.morphologyEx(b_i, cv2.MORPH_ERODE, np.ones((6,6),np.uint8))
+  #
+  #  elif i == (current + 1):
+  #    if b_i[k[1]][k[0]] == 0:
+  #      b_i1[k[1]][k[0]] = 1
+  #
+  #if (i % 2) == 1:
+  #  current += 1
+
+    #if i == 0:
+    #  b_i[k[1]][k[0]] = 1
+    #  b_i1 = cv2.morphologyEx(b_i, cv2.MORPH_ERODE, np.ones((6,6),np.uint8))
+    #elif i == 1:
+    #  if b_i[k[1]][k[0]] == 0:
+    #    b_i1[k[1]][k[0]] = 1
+
+    
+  ax3.imshow(b_i, cmap="gray")
+  ax4.imshow(tmp, cmap="gray")    
+        
+#ii = 0
+#for i in range(5):
+#  ii = i + 1
+#  if i == 0 && ii == 1:
+#    # do 
+#  elif i == 1 && ii == 2
+
+  # i es current
+  # ii es next
+
+#fig3,ax3 = plt.subplots(1,1)
+#img_c = np.zeros(image_flat.shape, np.uint8)
+#img_c = cv2.cvtColor(img_c, cv2.COLOR_GRAY2RGB)
+#cv2.drawContours(img_c, contours, -1, (0,255,0), 3)
+#ax3.imshow(img_c)
+
+#b_i[rx_test[0]][ry_test[0]] = 1
+
+#fig4,ax4 = plt.subplots(1,1)
+#ax4.imshow(b_i)
+
+#plt.imshow(thresh1)
+
+#for i in range(20,1,-1):
+  #ret,thresh1 = cv.threshold(img,127,255,cv.THRESH_BINARY)
+  #print(i)
+
+#for i,x in enumerate(b_i[:1]):
+#  for j,y in enumerate(x):
+#    for k, label in enumerate(labels):
+#      b_i[i][j] = np.array()
+
+myArr = np.array([1,2,3,4,5,6,7,8,9])
+myArr[3:4]
+
+0 % 2
 
 f1, ax1 = plt.subplots(1,1)
 xx_range = [0, image.shape[1]]
@@ -1262,12 +1389,16 @@ black_image = np.zeros(image_flat.shape, np.uint8)
 
 for i, value in enumerate(gray_levels_selected):
   black_image[image_flat == value] = 1
+  #black_image  = cv2.morphologyEx(black_image, cv2.MORPH_ERODE, np.ones((3,3), np.uint8))
 
 kernel = np.ones((3,3), np.uint8)
-#black_image  = cv2.morphologyEx(black_image, cv2.MORPH_OPEN, kernel)
-#black_image  = cv2.morphologyEx(black_image, cv2.MORPH_ERODE, kernel)
+black_image  = cv2.morphologyEx(black_image, cv2.MORPH_OPEN, kernel)
+black_image  = cv2.morphologyEx(black_image, cv2.MORPH_ERODE, kernel)
 
-labels, num = measure.label(black_image, return_num=True, connectivity=None, background=0.) 
+#labels, num = measure.label(black_image, return_num=True, background=0.) 
+_labels = ndimage.label(black_image)
+labels = _labels[0]
+num = _labels[1]
 
 f2,ax2 = plt.subplots(1,1)
 ax2.plot(peaks,h[peaks], "x", label="Max relatives")
@@ -1284,23 +1415,19 @@ ax1.imshow(labels, cmap='nipy_spectral')
 ax1.set_title("Regions rebuilt number " + str(num))
 fig0.show()
 
-_labels = ndimage.label(black_image)
-
-lbl = _labels[0]
-num_regions = _labels[1]
+#_labels = ndimage.label(black_image)
+#num_regions = _labels[1]
 
 valuesNorm = (values - min(values)) / (max(values) - min(values))
 
 # Center of mass of each region
-centers = ndimage.measurements.center_of_mass(black_image, lbl, np.arange(1,num_regions))
-print(len(centers), len(valuesNorm), num_regions)
+centers = ndimage.measurements.center_of_mass(black_image, labels, np.arange(1,num))
+print(len(centers), len(valuesNorm), num)
 
-fig0, (ax0,ax1) = plt.subplots(1,2, figsize=(11,8))
-ax0.imshow(black_image, cmap="gray")
-ax1.imshow(lbl, cmap='nipy_spectral')
-#ax1.scatter([myX], [myY], c="white")
-ax1.set_title("Regions rebuilt number " + str(num_regions))
-fig0.show()
+tmp = np.zeros(labels.shape, np.uint8)
+for i in range(num):
+  tmp = np.where(labels == i, i, tmp)
+plt.imshow(tmp)
 
 image_regs_kms = image_flat.copy()
 
