@@ -1448,6 +1448,7 @@ image_norm_array = np.float32(image_norm_array)
 for i in image_norm_array[:10]:
   print(i)
 
+image_regs_kms = ma.masked_values(image_regs_kms, 0.)
 pixel_values = image_regs_kms.reshape((-1, 1))
 pixel_values = np.float32(pixel_values)
 
@@ -1460,10 +1461,11 @@ criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.85)
   
 # then perform k-means clustering wit h number of clusters defined as 3
 #also random centres are initally chosed for k-means clustering
-k = 30
+k = 20
 retval, labels1, centers2 = cv2.kmeans(pixel_values, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
 
 retval11, labels11, centers11 = cv2.kmeans(image_norm_array, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+
 
 #wt_kmeansclus = kmeans.fit(X,sample_weight = Y)
 #predicted_kmeans = kmeans.predict(X, sample_weight = Y)
@@ -1483,9 +1485,11 @@ segmented_image = segmented_image.astype(np.uint8)
 #image_color = cv2.cvtColor(image_flat , cv2.COLOR_GRAY2RGB)
 #segmented_image_2 = segmented_data_1.reshape(image_color.shape)
 
-plt.imshow(segmented_image, cmap="jet")
-plt.title('CLUSTERS - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
+plt.imshow(segmented_image, cmap="gray")
+plt.title('CLUSTERS:' +str(k)+ ' - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
 plt.show()
+
+"""To get the extracted regions I have to get the gray level predicted on the image created by kmeans"""
 
 s_i = segmented_image.copy()
 s_i = ma.masked_values(s_i, 0.)
@@ -1540,9 +1544,16 @@ for i, cont in enumerate(all_contours_regions):
   ax3.imshow(img_c)
 
 f,x = plt.subplots(1,1)
+print(len(all_content_regions))
+
 for a in all_content_regions[:]:
   a = ma.masked_values(a, 0.)
-  x.imshow(a)
+  x.imshow(a, cmap="gray")
+  x.axis('off')
+  x.set_title('Set of regions regrouped :' +str(k)+ ' - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
+
+f.savefig(filename, bbox_inches='tight', pad_inches=0,transparent=True)
+plt.close(fig)
 
 all_polys_regions = list()
 all_points_regions = list()
@@ -1626,6 +1637,11 @@ for file in directories:
         best_regions = list()
         worst_regions = list()
 
+        all_true_positives = list()
+        all_true_negatives = list()
+        all_false_positives = list()
+        all_false_negatives = list()
+
         for region_ in all_content_regions:
           im_orig = region_.copy()
           im_bin = img_gray.copy()
@@ -1666,19 +1682,29 @@ for file in directories:
                   true_negatives += 1
               
 
-          print("pixels: true_positives", true_positives)
-          print("pixels: false_positives",false_positives)
-          print("pixels: false_negatives",false_negatives)
-          print("pixels: true_negatives",true_negatives)
+          #print("pixels: true_positives", true_positives)
+          #print("pixels: false_positives",false_positives)
+          #print("pixels: false_negatives",false_negatives)
+          #print("pixels: true_negatives",true_negatives)
           print("\n")
           total_pixels_blancs_ref = len(im_bin[im_bin == 1])
           total_pixels_blancs_test = len(im_orig[im_orig == 1])
-          print("total_pixels_blancs_ref", total_pixels_blancs_ref)
-          print("total_pixels_blancs_test", total_pixels_blancs_test)
+          im_test_ones = np.ones(im_bin.shape, np.uint8)
+          im_test_ones = np.where(im_bin == 0,0,im_test_ones)
+          im_test_ones = np.where(im_orig == 0,0,im_test_ones)
+          total_pixels_noirs = len(im_test_ones[im_test_ones == 0])
+          #print("total_pixels_blancs_ref", total_pixels_blancs_ref)
+          #print("total_pixels_blancs_test", total_pixels_blancs_test)
           print("\n")
           print("perc: true_positives", int(true_positives * 100 / total_pixels_blancs_test), "%")
           print("perc: false_positives", int(false_positives * 100 / total_pixels_blancs_test), "%")
           print("perc: false_negatives", int(false_negatives * 100 / total_pixels_blancs_ref), "%")
+          print("perc: true_negatives", int(true_negatives * 100 / total_pixels_noirs), "%")
+
+          all_true_positives.append(true_positives * 100 / total_pixels_blancs_test)
+          all_false_positives.append(false_positives * 100 / total_pixels_blancs_test)
+          all_false_negatives.append(false_negatives * 100 / total_pixels_blancs_ref)
+          all_true_negatives.append(true_negatives * 100 / total_pixels_noirs)
 
           if int(true_positives * 100 / total_pixels_blancs_test) >= 30:
             best_regions.append(im_orig)
@@ -1692,6 +1718,14 @@ for file in directories:
           plt.title('Ground Truth and Regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
           plt.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
           plt.show()
+
+fig, ax = plt.subplots(1,1)
+ax.plot( np.arange(len(all_true_positives)), all_true_positives, label="True Positives")
+ax.plot( np.arange(len(all_false_positives)), all_false_positives, label="False Positives")
+ax.plot( np.arange(len(all_false_negatives)), all_false_negatives, label="False Negatives")
+ax.plot( np.arange(len(all_true_negatives)), all_true_negatives, label="True Negatives")
+
+ax.legend()
 
 fig, (axx, axx2) = plt.subplots(1,2)
 
@@ -1718,10 +1752,138 @@ axx.set_title('Best regions - IASI ' + imageLT.image_type + " - " + str(imageLT.
 axx2.imshow(black_image_worst, cmap="gray")
 axx2.set_title('Worst regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
 
-final_image = cv2.bitwise_and(gray, gray, mask=black_image)
-plt.imshow(final_image, cmap="nipy_spectral")
+## THIS IS FOR COMPARE MSER REGIONS WITH THE GROUND TRUTH
+
+im_bin = img_gray.copy()
+mser_regions = regions.copy()
+ 
+#print(len(mser_regions))
+
+best_regions = list()
+worst_regions = list()
+
+all_true_positives = list()
+all_true_negatives = list()
+all_false_positives = list()
+all_false_negatives = list()
+
+#f,ax = plt.subplots(1,1)
 
 
+for region in mser_regions[800:]:
+  img_mser = np.zeros(img_gray.shape, np.uint8)
+
+  for k in region:
+    cv2.circle(img_mser, (k[0],k[1]), radius=0, color=255, thickness=-1)
+
+  im_orig = img_mser.copy()
+  
+  im_orig = cv2.normalize(im_orig, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+  im_bin = cv2.normalize(im_bin, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+  
+  true_positives = 0
+  false_positives = 0
+  false_negatives = 0
+  true_negatives = 0
+
+  #true_positives = 
+  t_pp = im_bin[im_orig == 1]
+  
+  for i,x in enumerate(im_bin[:]):
+    for j,y in enumerate(x[:]):
+      if y == 1:
+        if im_orig[i][j] == 1:
+          # True positive
+          true_positives += 1
+        else:
+          false_negatives += 1
+      else:
+        if im_orig[i][j] == 1:
+          # False positives
+          false_positives += 1
+        else:
+          true_negatives += 1
+      
+
+  #print("pixels: true_positives", true_positives)
+  #print("pixels: false_positives",false_positives)
+  #print("pixels: false_negatives",false_negatives)
+  #print("pixels: true_negatives",true_negatives)
+  #print("\n")
+  total_pixels_blancs_ref = len(im_bin[im_bin == 1])
+  total_pixels_blancs_test = len(im_orig[im_orig == 1])
+  im_test_ones = np.ones(im_bin.shape, np.uint8)
+  im_test_ones = np.where(im_bin == 0,0,im_test_ones)
+  im_test_ones = np.where(im_orig == 0,0,im_test_ones)
+  total_pixels_noirs = len(im_test_ones[im_test_ones == 0])
+  #print("total_pixels_blancs_ref", total_pixels_blancs_ref)
+  #print("total_pixels_blancs_test", total_pixels_blancs_test)
+  #print("\n")
+  #print("perc: true_positives", int(true_positives * 100 / total_pixels_blancs_test), "%")
+  #print("perc: false_positives", int(false_positives * 100 / total_pixels_blancs_test), "%")
+  #print("perc: false_negatives", int(false_negatives * 100 / total_pixels_blancs_ref), "%")
+  #print("perc: true_negatives", int(true_negatives * 100 / total_pixels_noirs), "%")
+
+  all_true_positives.append(true_positives * 100 / total_pixels_blancs_test)
+  all_false_positives.append(false_positives * 100 / total_pixels_blancs_test)
+  all_false_negatives.append(false_negatives * 100 / total_pixels_blancs_ref)
+  all_true_negatives.append(true_negatives * 100 / total_pixels_noirs)
+
+  if int(true_positives * 100 / total_pixels_blancs_test) >= 30:
+    best_regions.append(im_orig)
+  else:
+    worst_regions.append(im_orig)
+
+fig, ax = plt.subplots(1,1)
+ax.plot( np.arange(len(all_true_positives)), all_true_positives, label="True Positives")
+ax.plot( np.arange(len(all_false_positives)), all_false_positives, label="False Positives")
+ax.plot( np.arange(len(all_false_negatives)), all_false_negatives, label="False Negatives")
+ax.plot( np.arange(len(all_true_negatives)), all_true_negatives, label="True Negatives")
+
+ax.legend()
+
+im_bin = img_gray.copy()
+mser_regions = regions.copy()
+
+for region in mser_regions[:10]:
+  img_mser = np.zeros(img_gray.shape, np.uint8)
+
+  for k in region:
+    cv2.circle(img_mser, (k[0],k[1]), radius=0, color=255, thickness=-1)
+
+  im_orig = img_mser.copy()
+  
+  im_orig = cv2.normalize(im_orig, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+  im_bin = cv2.normalize(im_bin, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+  
+  for img in pred_list:
+      pred_img=cv2.imread("absolute_path/pred/%s" % img)
+      true_img=cv2.imread("absolute_path/true/%s" % img)
+
+fig, (axx, axx2) = plt.subplots(1,2)
+
+black_image_best = np.zeros(best_regions[0].shape, np.uint8)
+black_image_worst = np.zeros(worst_regions[0].shape, np.uint8)
+
+for reg in best_regions[:]:
+  tmp = ma.masked_values(reg, 0.)
+  for i,x in enumerate(tmp[:]):
+    for j,y in enumerate(x):
+      if isinstance(y, np.uint8):
+        black_image_best[i][j] = 1
+
+for reg in worst_regions[:]:
+  tmp = ma.masked_values(reg, 0.)
+  for i,x in enumerate(tmp[:]):
+    for j,y in enumerate(x):
+      if isinstance(y, np.uint8):
+        black_image_worst[i][j] = 1
+
+
+axx.imshow(black_image_best, cmap="gray")
+axx.set_title('Best regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
+axx2.imshow(black_image_worst, cmap="gray")
+axx2.set_title('Worst regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
 
 
 
