@@ -1427,53 +1427,30 @@ all_false_negatives = list()
 
 all_accuracy = list()
 
-for region in mser_regions[:100]:
-  img_mser = np.zeros(img_gray.shape, np.uint8)
-
-  for k in region:
-    cv2.circle(img_mser, (k[0],k[1]), radius=0, color=255, thickness=-1)
-
-  im_orig = img_mser.copy()
-  
-  im_orig = cv2.normalize(im_orig, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-  im_bin = cv2.normalize(im_bin, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
-  c_m_temp = confusion_matrix(im_bin.flatten(), im_orig.flatten())
-  true_positives = c_m_temp[1][1]
-  false_positives = c_m_temp[0][1]
-  false_negatives = c_m_temp[1][0]
-  true_negatives = c_m_temp[0][0]
-
-  accuracy = accuracy_score(im_bin.flatten(),im_orig.flatten()) * 100
-  
-  total_pixels_blancs_ref = len(im_bin[im_bin == 1])
-  total_pixels_blancs_test = len(im_orig[im_orig == 1])
-  im_test_ones = np.ones(im_bin.shape, np.uint8)
-  im_test_ones = np.where(im_bin == 1,0,im_test_ones)
-  im_test_ones = np.where(im_orig == 1,0,im_test_ones)
-
-  total_pixels_noirs = len(im_test_ones[im_test_ones == 0])
-  
-  #print("\n")
-  #print("perc: true_positives", int(true_positives * 100 / total_pixels_blancs_test), "%")
-  #print("perc: false_positives", int(false_positives * 100 / total_pixels_blancs_test), "%")
-  #print("perc: false_negatives", int(false_negatives * 100 / total_pixels_blancs_ref), "%")
-  ##print("perc: true_negatives", int(true_negatives * 100 / total_pixels_noirs), "%")
-  
-  #plt.figure()
-  #plt.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
-  #plt.show()
-
-  all_true_positives.append(int(true_positives * 100 / total_pixels_blancs_test))
-  all_false_positives.append(int(false_positives * 100 / total_pixels_blancs_test))
-  all_false_negatives.append(int(false_negatives * 100 / total_pixels_blancs_ref))
-  all_true_negatives.append(int(true_negatives * 100 / total_pixels_noirs))
-  all_accuracy.append(accuracy)
-
-  if int(true_positives * 100 / total_pixels_blancs_test) >= 30:
-    best_regions.append(im_orig)
-  else:
-    worst_regions.append(im_orig)
+for ii,region in enumerate(mser_regions[:]):
+  try:
+    img_mser = np.zeros(img_gray.shape, np.uint8)
+    for k in region:
+      cv2.circle(img_mser, (k[0],k[1]), radius=0, color=255, thickness=-1)
+    im_orig = img_mser.copy()
+    im_orig = cv2.normalize(im_orig, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+    im_bin = cv2.normalize(im_bin, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+    c_m_temp = confusion_matrix(im_bin.flatten(), im_orig.flatten())
+    true_positives = c_m_temp[1][1]
+    false_positives = c_m_temp[0][1]
+    false_negatives = c_m_temp[1][0]
+    true_negatives = c_m_temp[0][0]
+    accuracy = accuracy_score(im_bin.flatten(),im_orig.flatten()) * 100
+    total_pixels_blancs_test = len(im_orig[im_orig == 1])
+    all_true_positives.append(int(true_positives * 100 / total_pixels_blancs_test))
+    all_false_positives.append(int(false_positives * 100 / total_pixels_blancs_test))
+    all_accuracy.append(accuracy)
+    if int(true_positives * 100 / total_pixels_blancs_test) >= 30:
+      best_regions.append(im_orig)
+    else:
+      worst_regions.append(im_orig)
+  except:
+    print("There was an error at region", ii)
   
 
 fig, ax = plt.subplots(1,1)
@@ -1498,12 +1475,12 @@ ax.legend()
 #print("Confusion Matrix: ", c_m_mser) 
 #print("Accuracy : ", a_s_mser)
 
+len(all_true_positives)
+
 ## COMPARING TRUE POSITIVES WITH GRAY VALUES AND POSITION IN SPACE
 
 all_t_p = all_true_positives.copy()
 all_f_p = all_false_positives.copy()
-all_t_n = all_true_negatives.copy()
-all_f_n = all_false_negatives.copy()
 
 rx_test = regx.copy()
 ry_test = regy.copy()
@@ -1545,9 +1522,17 @@ plt.title('Dobson units related with the regions found - IASI ' + imageLT.image_
 plt.xlabel("True Positives")
 plt.ylabel('DU')
 ticks = range(1,2)
-labels = list(["TP", "FP"])
+labels = list(["TP"])
 plt.xticks(ticks,labels)
 plt.show()
+
+
+
+
+
+
+
+
 
 
 
