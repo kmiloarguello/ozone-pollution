@@ -1135,15 +1135,9 @@ peaks, _ = find_peaks(h) #,height=1000)
 gray_levels_selected = bins[peaks]
 black_image = np.zeros(image_flat.shape, np.uint8)
 
-value_test = 0
 for i, value in enumerate(gray_levels_selected):
-  if i == 0:
-    value_test = value
-  else:
-    if value_test == value:
-      print("Value",value,"at", i)
-
-  black_image[image_flat == value] = 1
+  #black_image[image_flat == value] = 1
+  black_image = np.where(image_flat == value, 1, black_image)
   #black_image  = cv2.morphologyEx(black_image, cv2.MORPH_ERODE, np.ones((3,3), np.uint8))
 
 kernel = np.ones((3,3), np.uint8)
@@ -1191,9 +1185,6 @@ plt.imshow(tmp, cmap="gray")
 ## PRIMERO ENCONTRAR BORDES
 ## LUEGO REGIONES
 
-#polys_regions.append(Polygon(myContour))
-#points_regions.append(MultiPoint(myContour))
-
 N_CLUSTERS = 10
 im_regs = image_flat.copy()
 
@@ -1221,9 +1212,6 @@ for n in image_norm_array[:]:
   weights_list.append(n[2] * 10)
 
 weights = np.asarray(weights_list)
-
-for i in weights[:10]:
-  print(i)
 
 # TESTING KMEANS
 wcss = list()
@@ -1261,8 +1249,10 @@ for i,lbl in enumerate(cluster_labels[:]):
 # SI YO LE DIGO DEME LOS PIXELES DEL CLUSTER 3 
 
 tmp = np.zeros(im_regs.shape, np.uint8)
-tmp = np.where(im_clusters == 3,1, tmp)
+tmp = np.where(im_clusters == 9,1, tmp)
 plt.imshow(tmp)
+
+max(cluster_labels)
 
 directories = os.listdir( imageLT.get_DIR_TRAIN() )
  
@@ -1281,16 +1271,16 @@ for file in directories:
         #img_gray = ma.masked_values(img_gray, 255.)
         img_gray = cv2.GaussianBlur(img_gray,(5,5),cv2.BORDER_DEFAULT)
 
-        best_regions = list()
-        worst_regions = list()
+        best_regions_c = list()
+        worst_regions_c = list()
 
-        all_true_positives = list()
-        all_true_negatives = list()
-        all_false_positives = list()
-        all_false_negatives = list()
-        all_accuracy = list()
+        all_true_positives_c = list()
+        all_true_negatives_c = list()
+        all_false_positives_c = list()
+        all_false_negatives_c = list()
+        all_accuracy_c = list()
 
-        for i in range(1,max(cluster_labels)):
+        for i in range(1,max(cluster_labels) + 1):
           im_bin = img_gray.copy()
           
           im_orig = np.zeros(im_regs.shape, np.uint8)
@@ -1328,18 +1318,18 @@ for file in directories:
           print("perc: false_negatives", int(false_negatives * 100 / total_pixels_blancs_ref), "%")
           #print("perc: true_negatives", int(true_negatives * 100 / total_pixels_noirs), "%")
 
-          all_true_positives.append(true_positives * 100 / total_pixels_blancs_test)
-          all_false_positives.append(false_positives * 100 / total_pixels_blancs_test)
-          all_false_negatives.append(false_negatives * 100 / total_pixels_blancs_ref)
+          all_true_positives_c.append(true_positives * 100 / total_pixels_blancs_test)
+          all_false_positives_c.append(false_positives * 100 / total_pixels_blancs_test)
+          all_false_negatives_c.append(false_negatives * 100 / total_pixels_blancs_ref)
           #all_true_negatives.append(true_negatives * 100 / total_pixels_noirs)
-          all_accuracy.append(accuracy)
+          all_accuracy_c.append(accuracy)
 
           if int(true_positives * 100 / total_pixels_blancs_test) >= 30:
-            best_regions.append(im_orig)
+            best_regions_c.append(im_orig)
           else:
-            worst_regions.append(im_orig)
+            worst_regions_c.append(im_orig)
 
-          error = np.sum(np.abs(im_orig - im_bin))
+          #error = np.sum(np.abs(im_orig - im_bin))
 
           # visualize the differences between the original image and the solution
           plt.figure()
@@ -1347,13 +1337,16 @@ for file in directories:
           plt.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
           plt.show()
 
+sensitivity_c = list()
+for i,tp in enumerate(all_true_positives_c):
+  sensitivity_c.append(tp / (tp + all_false_negatives_c[i]))
 
 fig, ax = plt.subplots(1,1)
-ax.plot( np.arange(len(all_true_positives)), all_true_positives, label="True Positives")
-ax.plot( np.arange(len(all_false_positives)), all_false_positives, label="False Positives")
-ax.plot( np.arange(len(all_false_negatives)), all_false_negatives, label="False Negatives")
-ax.plot( np.arange(len(all_accuracy)), all_accuracy, "--", label="Accuracy")
-#ax.plot( np.arange(len(all_true_negatives)), all_true_negatives, label="True Negatives")
+ax.plot( np.arange(len(all_true_positives_c)), all_true_positives_c, label="True Positives")
+ax.plot( np.arange(len(all_false_positives_c)), all_false_positives_c, label="False Positives")
+ax.plot( np.arange(len(all_false_negatives_c)), all_false_negatives_c, label="False Negatives")
+ax.plot( np.arange(len(all_accuracy_c)), all_accuracy_c, "--", label="Accuracy")
+#ax.plot( np.arange(len(sensitivity_c)), sensitivity_c, "--", label="Sensitivity")
 
 ax.set_title('Confusion Matrix variation - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
 ax.set_xlabel("Cluster index")
@@ -1362,17 +1355,17 @@ ax.legend()
 
 fig, (axx, axx2) = plt.subplots(1,2)
 
-black_image_best = np.zeros(best_regions[0].shape, np.uint8)
-black_image_worst = np.zeros(worst_regions[0].shape, np.uint8)
+black_image_best = np.zeros(best_regions_c[0].shape, np.uint8)
+black_image_worst = np.zeros(worst_regions_c[0].shape, np.uint8)
 
-for reg in best_regions[:]:
+for reg in best_regions_c[:]:
   tmp = ma.masked_values(reg, 0.)
   for i,x in enumerate(tmp[:]):
     for j,y in enumerate(x):
       if isinstance(y, np.uint8):
         black_image_best[i][j] = 1
 
-for reg in worst_regions[:]:
+for reg in worst_regions_c[:]:
   tmp = ma.masked_values(reg, 0.)
   for i,x in enumerate(tmp[:]):
     for j,y in enumerate(x):
@@ -1387,28 +1380,28 @@ axx2.set_title('Worst regions - IASI ' + imageLT.image_type + " - " + str(imageL
 
 ## COMPARING TRUE POSITIVES WITH GRAY VALUES AND POSITION IN SPACE
 
-all_t_p = all_true_positives.copy()
-all_f_p = all_false_positives.copy()
-all_t_n = all_true_negatives.copy()
-all_f_n = all_false_negatives.copy()
+all_t_p_c = all_true_positives_c.copy()
+all_f_p_c = all_false_positives_c.copy()
+all_t_n_c = all_true_negatives_c.copy()
+all_f_n_c = all_false_negatives_c.copy()
 
 rx_test = regx.copy()
 ry_test = regy.copy()
 val_test = values.copy()
 
-gray_levels_true_positive = list() # List of the best gray levels based on the true positives
-for i,tp in enumerate(all_t_p):
+gray_levels_true_positive_c = list() # List of the best gray levels based on the true positives
+for i,tp in enumerate(all_t_p_c):
   #if tp > 0:
-  gray_levels_true_positive.append(val_test[i])
+  gray_levels_true_positive_c.append(val_test[i])
 
 
-plt.boxplot([gray_levels_true_positive])
+plt.boxplot([gray_levels_true_positive_c])
 plt.title('Dobson units related with the regions found - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
 plt.xlabel("True Positives")
 plt.ylabel('DU')
 ticks = range(1,2)
-labels = list(["TP"])
-plt.xticks(ticks,labels)
+labels_plot = list(["TP"])
+plt.xticks(ticks,labels_plot)
 plt.show()
 
 ## THIS IS FOR COMPARE MSER REGIONS WITH THE GROUND TRUTH
@@ -1497,17 +1490,21 @@ y_range = [0, image.shape[0]]
 #f3d = plt.figure(figsize=(14, 9))
 #ax2 = plt.axes(projection ='3d')
 
+
+# ax.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
+
 gray_levels_true_positive = list() # List of the best gray levels based on the true positives
 how_many_true_positive_regions = 0
-for i,tp in enumerate(all_t_p):
+for i,tp in enumerate(all_t_p):  
   if tp > 0:
     gray_levels_true_positive.append(val_test[i])
     how_many_true_positive_regions += 1
-    ax.scatter(rx_test[i], ry_test[i], marker='.' )
-    ax.set_xlim(*x_range)
-    ax.set_ylim(*y_range)
-    ax.set_title('TP MSER REGIONS - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
-    ax.invert_yaxis()
+  ax.scatter(rx_test[i], ry_test[i], marker='.',cmap="gray")
+  ax.set_xlim(*x_range)
+  ax.set_ylim(*y_range)
+  ax.set_title('TP MSER REGIONS - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
+  ax.invert_yaxis()
+    #ax.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
 
 print("how_many_true_positive_regions", how_many_true_positive_regions, "of", len(val_test))
 
@@ -1516,6 +1513,8 @@ gray_leves_false_positive = list()
 for i,fp in enumerate(all_f_p):
   #if fp < 100:
   gray_leves_false_positive.append(val_test[i])
+
+plt.imshow(im_bin, cmap="gray")
 
 plt.boxplot([gray_levels_true_positive])
 plt.title('Dobson units related with the regions found - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
