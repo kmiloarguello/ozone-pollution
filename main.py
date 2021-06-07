@@ -91,8 +91,8 @@ class SplitImageLevels():
     self.DIR_DATA = DIR_DATA
     self.DIR_TRAIN = DIR_TRAIN
 
-
-
+  def __del__(self):
+    print("Class finished")
 
 
   ############################################################################
@@ -827,7 +827,7 @@ class SplitImageLevels():
     return value_pixel
 
 
-  def export_mser_regions (self,image,regsX,regsY,values, filename="regions-mser.png"):
+  def export_mser_regions (self,image,regsX,regsY,values,filename="regions-mser.png",default_color="Greys_r"):
     x_range = [0, image.shape[1]]
     y_range = [0, image.shape[0]]
 
@@ -839,7 +839,7 @@ class SplitImageLevels():
     else:
       max_color_value = 45
     
-    colors = sns.color_palette("Greys_r", max_color_value + 1)
+    colors = sns.color_palette(default_color, max_color_value + 1)
     cmap = matplotlib.colors.ListedColormap(colors)
     norm = matplotlib.colors.BoundaryNorm(np.arange(max_color_value + 1) - 0.5, cmap.N)
 
@@ -2032,9 +2032,85 @@ axx2.set_title('Worst regions - IASI ' + imageLT.image_type + " - " + str(imageL
 
 
 
+def setIterationForDay(day=1,typei="LT"):
+  imageLT = SplitImageLevels()
+  month=5
 
+  imageLT.set_year(2008)
+  imageLT.set_month(month)
+  imageLT.set_day(day)
+  imageLT.set_image_type(typei)
+  imageLT.set_image_name("levels")
+  imageLT.set_weight_gray_values(1)
+  imageLT.set_cluster_value(30)
+  imageLT.set_pixel_size(0.25,.125)
+  imageLT.get_image_by_leves()
+  bgr , gray = imageLT.load_image_from_files(imageLT.get_image_name())
+  image, foreground, background = imageLT.filter_image(gray)
+  kernel = np.ones((3,3),np.uint8)
+  foreground = cv2.dilate(foreground,kernel,iterations = 3)
+  image1 = cv2.bitwise_and(image,image, mask=foreground)
+  image2 = cv2.bitwise_and(image,image, mask=background)
+  myimage = cv2.cvtColor(image1, cv2.COLOR_GRAY2RGB)
+  myimage = cv2.bitwise_and(myimage,myimage, mask=foreground)
+  t_i = ma.masked_values(image1, 0.)
+  mser = cv2.MSER_create( 1, # delta 
+                        100, # min_area
+                        34400, #max_area 
+                        4., # max_variation 
+                        .01, # min_diversity 
+                        10000, # max_evolution 
+                        1.04, # area_threshold 
+                        0.003, # min_margin
+                        5) # edge_blur_size
 
+  # (1, 100, 20000, .25, 1., 1000, 1.001, 0.003, 5)
+  regions, bboxes = mser.detectRegions(myimage)
+  regions = sorted(regions, key=cv2.contourArea, reverse=True)
+  regx, regy, polys, lines, values = imageLT.set_mser_regions(t_i, background, regions[:])
+  
+  export_original_d(day,typei)
+  export_regions(day,typei)
 
+def export_original_d(day=1,typei="LT"):
+  month=5
+  fig2, (ax2) = plt.subplots(1, 1, figsize = (11,8))
+  ax2.pcolormesh(imageLT.v_x, imageLT.v_y, imageLT.colgrid1, shading='nearest',cmap='jet', vmin=imageLT.vmin, vmax=imageLT.vmax)
+  ax2.axis('off')
+  image_name = typei + '-color-' + str(2008) + '%02d'%month+'%02d'%day+'.png'
+  fig2.savefig(DIR_TEST + "06-06/"+ image_name, bbox_inches='tight', pad_inches=0)
+  plt.close(fig2)
+
+def export_regions(day=1,typei="LT"):
+  month=5
+  x_range = [0, image.shape[1]]
+  y_range = [0, image.shape[0]]
+
+  fig, ax = plt.subplots(1,1, figsize=(11,8), facecolor=(0, 0, 0))
+
+  if imageLT.image_type == 'LT':
+    max_color_value = 35
+  else:
+    max_color_value = 45
+
+  colors = sns.color_palette("YlOrBr_r", max_color_value + 1)
+  cmap = matplotlib.colors.ListedColormap(colors)
+  norm = matplotlib.colors.BoundaryNorm(np.arange(max_color_value + 1) - 0.5, cmap.N)
+
+  for i,val in enumerate(values):
+    ax.scatter(regx[i], regy[i], marker='.', color=cmap(norm(int(val))) )
+    ax.set_xlim(*x_range)
+    ax.set_ylim(*y_range)
+    ax.invert_yaxis()
+    ax.axis('off')
+
+  matplotlib.cm.ScalarMappable(cmap=cmap, norm=norm)
+  image_name = typei + '-reg-' + str(2008) + '%02d'%month+'%02d'%day+'.png'
+  fig.savefig(DIR_TEST + "06-06/" + image_name, bbox_inches='tight', pad_inches=0,transparent=True)
+  plt.close(fig)
+
+for i in range(1,30):
+  setIterationForDay(i, "LT")
 
 
 
