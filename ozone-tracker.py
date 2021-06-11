@@ -219,19 +219,19 @@ class SplitImageLevels():
     image, foreground, background = self.filter_image(image_gray)
     image,image_rbg,image_masked = self.filter_image_for_mser(image,foreground)
     regions_mser, boxes_mser = self.get_mser_regions(image_rbg)
-    self.plot_regions_mser_blue(image,regions_mser)
+    #self.plot_regions_mser_blue(image,regions_mser)
 
     kernel = np.ones((6,6), np.uint8)
     regx, regy, regs, polys, lines, values = self.set_mser_regions(image_masked, regions_mser)
-    self.plot_mser_final_regions(image_masked, regx, regy, values)
-    self.plot_polygons_hulls(image_masked,polys)
+    #self.plot_mser_final_regions(image_masked, regx, regy, values)
+    #self.plot_polygons_hulls(image_masked,polys)
 
     image_projected, image_projected_mask = self.create_label_map(image, regions_mser)
-    self.plot_projected_image(image_projected, regions_mser,boxes_mser)
+    #self.plot_projected_image(image_projected, regions_mser,boxes_mser)
 
     labels_cc, num_cc = self.reconstruct_connected_component(image_projected_mask)
     centroids, grays_values, areas_partition, boxes_partition = self.reconstruct_region_props(image_masked,labels_cc)
-    self.plot_regions_reconstructed(image_projected,centroids,areas_partition,grays_values,"du")
+    #self.plot_regions_reconstructed(image_projected,centroids,areas_partition,grays_values,"du")
 
     X, weights = self.create_X(image_projected,centroids,grays_values,WEIGHT=5)
     self.plot_X(X)
@@ -632,7 +632,7 @@ class SplitImageLevels():
       if gray >= np.mean(grays_values) and WEIGHT > 1:
         tmp_w = WEIGHT * 2
       else:
-        tmp_w = WEIGHT / 2
+        tmp_w = WEIGHT / 20
       weights_list.append(gray * tmp_w)
 
     gray_values_norm = (grays_values - min(grays_values)) / (max(grays_values) - min(grays_values))
@@ -665,8 +665,8 @@ class SplitImageLevels():
     fig, ax = plt.subplots(1,1)
     ax.plot(weigths)
     ax.set_title("Weigths" + self.get_image_datename())
-    ax0.set_xlabel("Number of Regions")
-    ax0.set_ylabel("Weight")
+    ax.set_xlabel("Number of Regions")
+    ax.set_ylabel("Weight")
     fig.show()
 
   def plot_test_best_cluster_number(self, X, weights, N_ITERATIONS= 40, N_CLUSTERS = 7):
