@@ -1289,7 +1289,7 @@ for val in components:
 ## PRIMERO ENCONTRAR BORDES
 ## LUEGO REGIONES
 
-N_CLUSTERS = 5
+N_CLUSTERS = 7
 WEIGHT = 5
 im_regs = projected.copy()
 
@@ -1409,6 +1409,8 @@ ax.set_zlabel('DU - normalized [0-1]')
 fig.legend()
 fig.show()
 
+## PLOT POINTS IN 2D
+
 for i in range(max(cluster_labels) + 1 ):
   plt.scatter(X[cluster_labels==i,0],X[cluster_labels==i,1],label="cluster " + str(i+1))
 plt.scatter(cluster_centers[:,0],cluster_centers[:,1],s=200,c="black",label="centroid")
@@ -1417,6 +1419,28 @@ plt.xlabel("Centre de gravité X")
 plt.ylabel("Centre de gravité Y")
 #plt.legend()
 plt.show()
+
+# TO TAKE ONLY THE HIHGEST REGION (TEST)
+
+cluster_highest_region = list()
+
+for center in cluster_centers:
+  cluster_highest_region.append(center[2])
+
+index_highest = np.argmax(cluster_highest_region)
+highest_cluster = cluster_centers[index_highest]
+
+print(highest_cluster)
+
+
+x_range = [0, 1]
+y_range = [0, 1]
+
+fig, ax1 = plt.subplots(1, 1)
+ax1.scatter(X[cluster_labels==index_highest,0],X[cluster_labels==index_highest,1],label="cluster " + str(i+1))
+ax1.scatter(highest_cluster[0],highest_cluster[1],s=200,c="black",label="centroid")
+ax1.set_xlim(*x_range)
+ax1.set_ylim(*y_range)
 
 from sklearn import metrics
 metrics.silhouette_score(X, cluster_labels,metric='euclidean')
