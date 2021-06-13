@@ -164,6 +164,18 @@ class SplitImageLevels():
   def get_cluster_value(self):
     return self.N_CLUSTERS
 
+  def set_vmin(self, vmin):
+    self.vmin = vmin
+
+  def get_vmin(self):
+    return self.vmin
+  
+  def set_vmax(self, vmax):
+    self.vmax = vmax
+
+  def get_vmax(self):
+    return self.vmax
+
 
 
 
@@ -253,12 +265,12 @@ class SplitImageLevels():
 
   def plot_original_image(self):
 
-    if self.image_type == 'LT':
-      vmax = 35
-      vmin = 3
-    else:
-      vmax = 45
-      vmin = 5
+    #if self.image_type == 'LT':
+    #  vmax = 35
+    #  vmin = 3
+    #else:
+    #  vmax = 45
+    #  vmin = 5
 
     fig, ax1 = plt.subplots(1,1)
     
@@ -270,7 +282,7 @@ class SplitImageLevels():
 
     divider = make_axes_locatable(ax1)
     cax = divider.append_axes('right', size='1%', pad=0.05)
-    cs = ax1.pcolormesh(self.v_x, self.v_y, self.colgrid1, shading='nearest',cmap='jet', vmin=vmin, vmax=vmax)
+    cs = ax1.pcolormesh(self.v_x, self.v_y, self.colgrid1, shading='nearest',cmap='jet', vmin=self.vmin, vmax=self.vmax)
     ax1.set_title(self.get_image_datename())
     fig.colorbar(cs,cax=cax)
     
@@ -292,27 +304,27 @@ class SplitImageLevels():
     image, foreground, background = self.filter_image(image_gray)
     image,image_rbg,image_masked = self.filter_image_for_mser(image,foreground)
     regions_mser, boxes_mser = self.get_mser_regions(image_rbg)
-    self.plot_regions_mser_blue(image,regions_mser)
+    #self.plot_regions_mser_blue(image,regions_mser)
 
     kernel = np.ones((6,6), np.uint8)
     regx, regy, regs, polys, lines, values = self.set_mser_regions(image_masked, regions_mser)
-    self.plot_mser_final_regions(image_masked, regx, regy, values)
-    self.plot_polygons_hulls(image_masked,polys)
+    #self.plot_mser_final_regions(image_masked, regx, regy, values)
+    #self.plot_polygons_hulls(image_masked,polys)
 
     image_projected, image_projected_mask = self.create_label_map(image, regions_mser)
-    self.plot_projected_image(image_projected, regions_mser,boxes_mser)
+    #self.plot_projected_image(image_projected, regions_mser,boxes_mser)
 
     labels_cc, num_cc = self.reconstruct_connected_component(image_projected_mask)
-    centroids, grays_values, areas_partition, boxes_partition = self.reconstruct_region_props(image_masked,labels_cc)
-    self.plot_regions_reconstructed(image_projected,centroids,areas_partition,grays_values,"du")
+    centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions = self.reconstruct_region_props(image_masked,labels_cc)
+    #self.plot_regions_reconstructed(image_projected,centroids,areas_partition,grays_values,"du")
 
     X, weights = self.create_X(image_projected,centroids,grays_values,WEIGHT=5)
-    self.plot_X(X)
-    self.plot_weights(weights)
+    #self.plot_X(X)
+    #self.plot_weights(weights)
 
-    self.plot_test_best_cluster_number(X,weights,40,7)
+    #self.plot_test_best_cluster_number(X,weights,40,7)
     cluster_labels, cluster_centers = self.classify_regions(X,weights,7)
-    self.plot_clustered_regions_3d(X,5,cluster_labels,cluster_centers)
+    #self.plot_clustered_regions_3d(X,5,cluster_labels,cluster_centers)
 
 
 
@@ -508,10 +520,7 @@ class SplitImageLevels():
     m.drawmeridians(np.r_[100:151:10], labels=[0,0,0,1], color='grey',fontsize=8,linewidth=0)
     m.drawparallels(np.r_[20:48:5], labels=[1,0,0,0], color='grey',fontsize=8,linewidth=0)
 
-    if self.image_type == 'LT':
-      max_color_value = 35
-    else:
-      max_color_value = 45
+    max_color_value = self.vmax
     
     colors = sns.color_palette("YlOrBr", max_color_value + 1)
     cmap = matplotlib.colors.ListedColormap(colors)
@@ -521,16 +530,13 @@ class SplitImageLevels():
       ax.scatter(rgsX2[i], rgsY2[i], marker='.', color=cmap(norm(int(val))) )
       ax.set_xlim(*x_range)
       ax.set_ylim(*y_range)
-      ax.set_title('REGIONS ' + str(len(values)) + ' - IASI ' + self.image_type + " - " + str(self.day) +"/"+ str(self.month) +"/"+ str(self.year))
+      ax.set_title('REGIONS ' + str(len(values)) + self.get_image_datename())
 
     sm = matplotlib.cm.ScalarMappable(cmap=cmap, norm=norm)
     cbar_ax = fig.add_axes([0.09, 0.06, 0.84, 0.02])
     cb = fig.colorbar(sm,cax=cbar_ax,orientation='horizontal')
 
-    if self.image_type == 'LT':
-      cb.set_ticklabels(np.arange(0,35,4))
-    else:
-      cb.set_ticklabels(np.arange(0,45,5))
+    cb.set_ticklabels(np.arange(0,self.vmax,self.vmin))
 
     cb.set_label('DU')
 
@@ -633,6 +639,7 @@ class SplitImageLevels():
 
   def reconstruct_connected_component(self, image_projected):
     labels, num = measure.label(image_projected, return_num=True, background=0.)
+    print("Total connected components", num)
     return labels, num
 
   def reconstruct_region_props(self, image_masked, labels_cc, min_width=2, min_height=3):
@@ -642,23 +649,25 @@ class SplitImageLevels():
     areas_partition = list()
     boxes_partition = list()
     grays_values = list()
+    ids_valid_regions = list()
 
-    for region in measure.regionprops(label_image=labels_cc):
+    for i,region in enumerate(measure.regionprops(label_image=labels_cc)):
       x_min = region.bbox[1]
       x_max = region.bbox[3]
       y_min = region.bbox[0]
       y_max = region.bbox[2]
-
-      if (x_max - x_min) > min_width and y_max - y_min > min_height:
-        boxes_partition.append(np.array([x_min,y_min,x_max,y_max]))
-        cx, cy = map(lambda p: int(p*rescale), (region.centroid[0], region.centroid[1]))
-        centroids.append((cx, cy))
-        areas_partition.append(region.area)
-        grays_values.append(self.get_region_value(image_masked,np.array([x_min,y_min,x_max,y_max]),True)) # Gray values for the regions partitions
+      # TODO: CORREGIR EL PROBLEMA CON LAS CLUSTERS Y LAS REGIONES QUE SE PIERDEN
+      # if (x_max - x_min) > min_width and y_max - y_min > min_height:
+      boxes_partition.append(np.array([x_min,y_min,x_max,y_max]))
+      cx, cy = map(lambda p: int(p*rescale), (region.centroid[0], region.centroid[1]))
+      centroids.append((cx, cy))
+      areas_partition.append(region.area)
+      grays_values.append(self.get_region_value(image_masked,np.array([x_min,y_min,x_max,y_max]),True)) # Gray values for the regions partitions
+      ids_valid_regions.append(i) # List to compare with CC. The idea is to rebuild the region as image, to do that we need the region id
 
     print("Regions reconstructed",len(centroids))
 
-    return centroids, grays_values, areas_partition, boxes_partition
+    return centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions
 
   def plot_regions_reconstructed(self, image_projected, centroids, areas_partition, grays_values, text_to_plot="id"):
     # font
@@ -695,20 +704,36 @@ class SplitImageLevels():
 
   ## CLUSTERING
 
+
+
+
+  def sigmoid(self,X):
+    return np.exp(X)
+    #return 1/(1+np.exp(X))
+
+  def softmax(self,X):
+    expo = np.exp(X)
+    expo_sum = np.sum(np.exp(X))
+    return expo/expo_sum
+
+
   def create_X(self, image_projected, centroids, grays_values, WEIGHT=5):
     x_norm = list() # array with centre de gravite x, y and gray value [(x,y,z)]
     weights_list = list()
+    grays = grays_values.copy()
 
     ## CREATE ARRAY BEFORE NORMALIZATION
-    for gray in grays_values:
+    for gray in grays:
       tmp_w = WEIGHT
-      if gray >= np.mean(grays_values) and WEIGHT > 1:
-        tmp_w = WEIGHT * 2
-      else:
-        tmp_w = WEIGHT / 2
+      if WEIGHT > 1:
+        tmp_w = WEIGHT # np.exp(gray)
       weights_list.append(gray * tmp_w)
 
-    gray_values_norm = (grays_values - min(grays_values)) / (max(grays_values) - min(grays_values))
+    #g_v = np.asarray(grays_values)
+    #Example with mmatrix defined above
+    #weights_list = self.sigmoid(g_v)
+
+    gray_values_norm = (grays - min(grays)) / (max(grays) - min(grays))
 
     for i,centroid in enumerate(centroids[:]):
       x = centroid[0] / image_projected.shape[0]
@@ -717,9 +742,9 @@ class SplitImageLevels():
       x_norm.append(np.array([x,y,z]))
 
     X = np.asarray(x_norm)
-    weights = np.asarray(weights_list)
-
-    return X, weights
+    # weights = np.asarray(weights_list) # weights_list.copy() 
+    
+    return X, weights_list
 
   def plot_X(self,X):
     fig = plt.figure()
@@ -738,8 +763,8 @@ class SplitImageLevels():
     fig, ax = plt.subplots(1,1)
     ax.plot(weigths)
     ax.set_title("Weigths" + self.get_image_datename())
-    ax0.set_xlabel("Number of Regions")
-    ax0.set_ylabel("Weight")
+    ax.set_xlabel("Number of Regions")
+    ax.set_ylabel("Weight")
     fig.show()
 
   def plot_test_best_cluster_number(self, X, weights, N_ITERATIONS= 40, N_CLUSTERS = 7):
@@ -749,7 +774,7 @@ class SplitImageLevels():
     print("finding best cluster...")
     for i in range(1,N_ITERATIONS):
       #print("kmeans for cluster #",i)
-      kmeanstest = KMeans(n_clusters=i, random_state=0, max_iter=500).fit(X, sample_weight=weights)
+      kmeanstest = KMeans(n_clusters=i, random_state=0, max_iter=500).fit(X, sample_weight=np.asarray(weights))
       wcss.append(kmeanstest.inertia_)
 
     fig0, ax = plt.subplots(1,1)
@@ -764,36 +789,48 @@ class SplitImageLevels():
     print("clustering...")
 
     clustering = KMeans(n_clusters=N_CLUSTERS,random_state=0, init='k-means++')
-    cluster_labels = clustering.fit_predict(X, sample_weight=weights)
+    cluster_labels = clustering.fit_predict(X, sample_weight=np.asarray(weights))
     cluster_centers = clustering.cluster_centers_
+
+    print("Cluster finished.")
 
     return cluster_labels, cluster_centers
 
   def plot_clustered_regions_3d(self,X,WEIGHT,cluster_labels, cluster_centers):
     # visualizing the clusters
-
-    fig = plt.figure()
+    fig = plt.figure(figsize=(11,8))
     ax = fig.add_subplot(111, projection='3d')
+
+    #X_gray_norm = X[:,2]
+    #X_gray = cv2.normalize(X_gray_norm, None, alpha=self.vmin, beta=self.vmax, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_64F)
 
     for i in range(max(cluster_labels) + 1):
       ax.scatter(X[cluster_labels==i,0],X[cluster_labels==i,1],X[cluster_labels==i,2], label="cluster " + str(i+1))
 
-    ax.scatter(cluster_centers[:,0],cluster_centers[:,1],cluster_centers[:,2],s=200,c="black",label="centroid-"+str(i))
-    ax.set_title("CLUSTERING W: " + str(WEIGHT) + self.get_image_datename()) 
+    #c_center_norm = cluster_centers[:,2]
+    #c_center = cv2.normalize(c_center_norm, None, alpha=self.vmin, beta=self.vmax, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_64F)
+    ax.scatter(cluster_centers[:,0],cluster_centers[:,1],cluster_centers[:,2],s=200,c="black",label="centroid "+str(i))
+
+    ax.set_title("CLUSTERING W: " + str(WEIGHT) + imageLT.get_image_datename()) 
     ax.set_xlabel('Centre de gravité X')
     ax.set_ylabel('Centre de gravité Y')
-    ax.set_zlabel('DU - normalized [0-1]')
+    ax.set_zlabel('Gray level normalized')
     fig.legend()
+    ax.view_init(30, 30)
+    plt.draw()
+    plt.pause(.001)
     fig.show()
+    plt.show()
 
   def plot_clustered_regions_2d(self,X,WEIGHT,cluster_labels, cluster_centers):
     fig, ax = plt.subplots(1,1)
     for i in range(max(cluster_labels) + 1 ):
-      ax.scatter(X[cluster_labels==i,0],X[cluster_labels==i,1],label="cluster " + str(i+1))
-    ax.scatter(cluster_centers[:,0],cluster_centers[:,1],s=200,c="black",label="centroid")
+      ax.scatter(X[cluster_labels==i,1],X[cluster_labels==i,0],label="cluster " + str(i+1))
+    ax.scatter(cluster_centers[:,1],cluster_centers[:,0],s=200,c="black",label="centroid")
     ax.set_title("CLUSTERING W: " + str(WEIGHT) + self.get_image_datename()) 
     ax.set_xlabel("Centre de gravité X")
     ax.set_ylabel("Centre de gravité Y")
+    ax.invert_yaxis()
     fig.legend()
     fig.show()
 
@@ -810,6 +847,37 @@ class SplitImageLevels():
 
     return highest_cluster, index_highest
 
+
+  def get_image_cluster(self, labels_cc, cluster_labels):
+    image_cluster = np.zeros(labels_cc.shape, np.uint8)
+    cluster_labels1 = cluster_labels.copy()
+    cluster_labels1 += 1
+
+    for i,lbl in enumerate(cluster_labels[:]):
+      image_cluster = np.where(labels_cc == (i+1), lbl + 1, image_cluster)
+
+    fig,axx = plt.subplots(1,1)
+    axx.imshow(image_cluster)
+
+    return image_cluster
+
+  def plot_image_cluster(self, labels_cc, cluster_labels, index_highest):
+    fig, (ax1,ax2) = plt.subplots(1,2, figsize=(11,8))
+    tmp = np.zeros(labels_cc.shape, np.uint8)
+    tmp1 = tmp.copy()
+
+    cluster_labels1 = cluster_labels.copy()
+    cluster_labels1 += 1
+
+    for i,lbl in enumerate(cluster_labels[:]):
+      tmp = np.where(labels_cc == (i+1), lbl + 1, tmp)
+
+    tmp1 = np.where(tmp == (index_highest + 1),1,0)
+
+    ax1.imshow(tmp, "jet")
+    ax2.imshow(tmp1, "gray")
+    fig.show()
+
   
   ###############################################################
   ###             REMOVE TEMP FILES
@@ -824,7 +892,6 @@ class SplitImageLevels():
       print("Error deleting the file -> ", self.image_name)
 
 imageLT = SplitImageLevels()
-
 imageLT.set_year(2008)
 imageLT.set_month(5)
 imageLT.set_day(6)
@@ -833,455 +900,167 @@ imageLT.set_image_name("levels")
 imageLT.set_weight_gray_values(1)
 imageLT.set_cluster_value(30)
 imageLT.set_pixel_size(0.25,.125)
-
+imageLT.set_vmin(10)
+imageLT.set_vmax(35)
 imageLT.get_image_by_leves()
-
+image_bgr , image_gray = imageLT.load_image_from_files(imageLT.get_image_name())
+image, foreground, background = imageLT.filter_image(image_gray)
+image,image_rbg,image_masked = imageLT.filter_image_for_mser(image,foreground)
+regions_mser, boxes_mser = imageLT.get_mser_regions(image_rbg)
 imageLT.plot_original_image()
 
-# imageLT.get_image_name()
-bgr , gray = imageLT.load_image_from_files(imageLT.get_image_name())
-imageLT.process_set_images(gray,bgr)
-#imageLT.remove_temporal_files()
-#imageLT.plot_original_image()
+image_projected, image_projected_mask = imageLT.create_label_map(image, regions_mser)
+imageLT.plot_projected_image(image_projected,regions_mser,boxes_mser)
 
-image, foreground, background = imageLT.filter_image(gray)
+labels_cc, num_cc = imageLT.reconstruct_connected_component(image_projected_mask)
+print(num_cc)
 
-kernel = np.ones((3,3),np.uint8)
-foreground = cv2.dilate(foreground,kernel,iterations = 3)
-image1 = cv2.bitwise_and(image,image, mask=foreground)
-image2 = cv2.bitwise_and(image,image, mask=background)
+centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions = imageLT.reconstruct_region_props(image_masked,labels_cc)
+#imageLT.plot_regions_reconstructed(image_projected, centroids, areas_partition, grays_values,'du')
 
-myimage = cv2.cvtColor(image1, cv2.COLOR_GRAY2RGB)
-myimage = cv2.bitwise_and(myimage,myimage, mask=foreground)
-#t_i = cv2.normalize(image1, None, 0, 255, cv2.NORM_MINMAX )
-t_i = ma.masked_values(image1, 0.)
-#print(t_i[~t_i.mask])
-#mymask = t_i.mask
-#image3 = cv2.bitwise_and(image, image, mask=mymask)
+WEIGHT = 2
+N_CLUSTERS = 6
 
-print(t_i.max(), t_i.min())
+X, weights = imageLT.create_X(image_projected,centroids,grays_values,WEIGHT)
+cluster_labels, cluster_centers = imageLT.classify_regions(X,weights,N_CLUSTERS)
 
-fig, (ax0, ax1) = plt.subplots(1,2, figsize=(11,8))
-ax0.imshow(myimage)
-ax1.imshow(foreground)
-#fig.title('Morpho Operations - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
+#plt.plot(grays_values)
+#imageLT.plot_weights(weights)
 
-#ax1.imshow(background, cmap="gray")
-#ax2.imshow(image2)
-#ax3.imshow(foreground, cmap="gray")
+#imageLT.plot_test_best_cluster_number(X,weights,40,N_CLUSTERS)
 
-fig3, ax3 = plt.subplots(1,1)
-#ax3.hist(t_i.ravel(), bins=256, range=(0.0, 1.0), fc='k', ec='k')
-ax3.hist(t_i[~t_i.mask],256,[0,256], fc='k', ec='k')
-#ax3.hist(image1.ravel(),254,[1,256], fc='k', ec='k')
-fig3.show()
+#imageLT.plot_clustered_regions_3d(X,5,cluster_labels,cluster_centers)
+#imageLT.plot_clustered_regions_2d(X,5,cluster_labels,cluster_centers)
 
-try:
-  image.shape[2]
-except:
-  print("er")
+_, index_highest = imageLT.get_highest_cluster(cluster_centers)
+image_cluster = imageLT.get_image_cluster(labels_cc,cluster_labels)
 
-"""
-delta	          it compares (sizei−sizei−delta)/sizei−delta
-min_area	      prune the area which smaller than minArea
-max_area	      prune the area which bigger than maxArea
-max_variation	  prune the area have similar size to its children
-min_diversity	  for color image, trace back to cut off mser with diversity less than min_diversity
-max_evolution	  for color image, the evolution steps
-area_threshold	for color image, the area threshold to cause re-initialize
-min_margin	    for color image, ignore too small margin
-edge_blur_size	for color image, the aperture size for edge blur
-"""
-
-mser = cv2.MSER_create( 1, # delta 
-                       500, # min_area
-                       34400, #max_area 
-                       4., # max_variation 
-                       .3, # min_diversity 
-                       10000, # max_evolution 
-                       1.04, # area_threshold 
-                       0.004, # min_margin
-                       5) # edge_blur_size
-
-# (1, 100, 20000, .25, 1., 1000, 1.001, 0.003, 5)
-regions, bboxes = mser.detectRegions(myimage)
-regions = sorted(regions, key=cv2.contourArea, reverse=True)
-
-def sort_boxes_by_area(box):
-  x, y, w, h = box
-  area = w * h
-  return area
-
-bboxes = sorted(bboxes, key=sort_boxes_by_area, reverse=True)
-
-#regions, bboxes = imageLT.get_mser_regions(image1, 100, 30000)
-#print(image1.shape)
-print(len(regions))
-
-img_mser = cv2.cvtColor(image1, cv2.COLOR_GRAY2RGB)
-
-for p in regions[:]:
-  for k in p:
-    cv2.circle(img_mser, (k[0],k[1]), radius=0, color=(0, 0, 255), thickness=-1)
-plt.imshow(img_mser)
-
-img_mser = cv2.cvtColor(image1, cv2.COLOR_GRAY2RGB)
-
-for p in regions[4:5]:
-  for k in p:
-    cv2.circle(img_mser, (k[0],k[1]), radius=0, color=(0, 0, 255), thickness=-1, lineType=cv2.FILLED)
-plt.imshow(img_mser)
-
-kernel = np.ones((6,6), np.uint8)
-background  = cv2.morphologyEx(background, cv2.MORPH_DILATE, kernel)
-regx, regy, regs, polys, lines, values = imageLT.set_mser_regions(t_i, background, regions[:])
-imageLT.plot_mser_final_regions(t_i, regx, regy, values)
-
-len(regions)
-
-fig, ax = plt.subplots(1,1)
-xx_range = [0, image.shape[1]]
-yy_range = [0, image.shape[0]]
-
-for j,poly in enumerate(polys[:]):
-  xxx,yyy = poly.exterior.xy
-
-  ax.plot(xxx,yyy)
-  ax.set_xlim(*xx_range)
-  ax.set_ylim(*yy_range)
-  ax.invert_yaxis()
-
-# Creation of Carte de labels
-
-#x_x = regx.copy()
-#y_y = regy.copy()
-#v_gris = values.copy()
-regs_temp = regions.copy()
-bbox_temp = bboxes.copy()
-
-#fig, ax = plt.subplots(1,1)
-projected = np.zeros(image.shape, np.uint16)
-
-from skimage.morphology import square
-
-
-# font
-font = cv2.FONT_HERSHEY_SIMPLEX
-# fontScale
-fontScale = .5
-# Blue color in BGR
-color = (255, 0, 0)
-# Line thickness of 2 px
-thickness = 1
-
-
-N_REGS_S = 1
-N_REGS = len(regions)
-connected_components = list()
-
-current = 1
-for i,r in enumerate(regs_temp[:N_REGS]):
-  counter = (i + 1)
-  
-  counter_has_summed = False
-  cc_has_summed = False
-
-  for j,k in enumerate(r):
-    if projected[k[1]][k[0]] != 0:
-      ## search intersection
-      if counter_has_summed is False:
-        counter = counter + 1 #int(projected[k[1]][k[0]])
-        connected_components.append(counter)
-        counter_has_summed = True
-
-      #if k[0] % 3 == 0 and k[1] % 2 == 0 and k[0] % 2 == 0 and k[1] % 3 == 0 and k[0] % 5 and k[0] % 7 and k[1] % 7 and k[0] % 11 and k[0] % 13:
-      #  cv2.putText(projected, str(counter), (k[0],k[1]), font, fontScale, 150, thickness, cv2.LINE_AA)
-      cv2.circle(projected, (k[0],k[1]), radius=1, color=(counter), thickness=-1, lineType=cv2.FILLED)
-    else:
-      if cc_has_summed is False:
-        connected_components.append(counter)
-        cc_has_summed = True
-      #if k[0] % 3 == 0 and k[1] % 2 == 0 and k[0] % 2 == 0 and k[1] % 3 == 0 and k[0] % 5 and k[0] % 7 and k[1] % 7 and k[0] % 11 and k[0] % 13:
-      #  cv2.putText(projected, str(counter), (k[0],k[1]), font, fontScale, 50, thickness, cv2.LINE_AA)
-      cv2.circle(projected, (k[0],k[1]), radius=1, color=(counter), thickness=-1, lineType=cv2.FILLED)
-    
-    #if cc_has_summed is False:
-    #  connected_components.append(counter)
-    #  cc_has_summed = True
-
-kernel = np.ones((3,3),np.uint8)
-projected = cv2.morphologyEx(projected, cv2.MORPH_CLOSE, kernel, iterations = 2)
-
-print(counter)
-
-projected1 = cv2.cvtColor(projected, cv2.COLOR_GRAY2BGR)
-
-for box in bbox_temp[:N_REGS]:
-  x, y, w, h = box
-  cv2.rectangle(projected1, (x, y), (x + w, y + h), (0, 0, 255), 2)
-
-
-# Using cv2.putText() method
-for i,r in enumerate(regs_temp[:N_REGS]):
-  cv2.putText(projected1, str(i+1), (r[0][0] + 10, r[0][1]), font, 1, color, thickness, cv2.LINE_AA)
-
-fig, (ax1,ax2) = plt.subplots(1,2, figsize=(21,15))
-ax1.imshow(projected, cmap="gray")
-ax2.imshow(projected1)
-
-pro = projected.copy()
-pro = ma.masked_values(pro, 0.)
-plt.imshow(pro)
-
-f2,ax2 = plt.subplots(1,1)
-ax2.hist(pro.ravel(),254,[1,N_REGS]);
-f2.legend()
-f2.show()
-
-print(N_REGS)
-
-# SI YO LE DIGO DEME LOS PIXELES DE LA REGION 20
-REGION_TO_SEARCH = 70
-tmp = np.zeros(projected.shape, np.uint16)
-tmp = np.where(projected == REGION_TO_SEARCH,1,tmp)
-plt.imshow(tmp, cmap="gray")
-
-labels_partition, num = measure.label(pro, return_num=True, background=0.) 
-#s = generate_binary_structure(2,2)
-#_labels = ndimage.label(black_image, structure=s)
-#labels_partition = _labels[0]
-#num = _labels[1]
-
-centers = ndimage.measurements.center_of_mass(pro, labels_partition, np.arange(1,num) )
-
-print(len(centers))
-
-fig, (ax1,ax2) = plt.subplots(1,2, figsize=(11,8))
-
-for i,c in enumerate(centers):
-  #if i == 100:
-  ax1.scatter(c[1],c[0], c="red")
-ax1.imshow(projected, cmap="gray")
-ax2.imshow(labels_partition)
-
-#all_labels = measure.label(bitmap)
-  # return centroids
-rescale=1.0
-centroids = list()
-areas_partition = list()
-boxes_partition = list()
-grays_values = list()
-min_width=2
-min_height=3
-
-dani = 0
-
-for region in measure.regionprops(label_image=labels_partition):
-  x_min = region.bbox[1]
-  x_max = region.bbox[3]
-  y_min = region.bbox[0]
-  y_max = region.bbox[2]
-
-  if (x_max - x_min) > min_width and y_max - y_min > min_height:
-    #boxes_partition.append(BoundingBox2D(x_min, x_max, y_min, y_max))
-    #minx, miny, maxx, maxy
-    boxes_partition.append(np.array([x_min,y_min,x_max,y_max]))
-    cx, cy = map(lambda p: int(p*rescale), (region.centroid[0], region.centroid[1]))
-    centroids.append((cx, cy))
-    areas_partition.append(region.area)
-    grays_values.append(imageLT.get_region_value(t_i,np.array([x_min,y_min,x_max,y_max]),True)) # Gray values for the regions partitions
-
-print(len(centroids), len(areas_partition), len(boxes_partition), len(grays_values))
-
-drawing = cv2.cvtColor(projected, cv2.COLOR_GRAY2BGR)
-
-for i in range(len(centroids)):
-    color = (random.randint(0,256), random.randint(0,256), random.randint(0,256))
-    # ID: str(i+1)
-    # Area: str(areas_partition[i])
-    # DU: str(int(imageLT.get_region_value(t_i,boxes_partition[i],True)))
-    cv2.putText(drawing, str(i+1), (int(centroids[i][1]), int(centroids[i][0])), font, .5, color, thickness, cv2.LINE_AA)
-    cv2.circle(drawing, (int(centroids[i][1]), int(centroids[i][0])), 3, color, -1)
-
-fig, ax = plt.subplots(1,1, figsize=(15,10))
-ax.imshow(drawing)
-
-REGION_TO_SEARCH = 51
-tmp = np.zeros(image.shape, np.uint16)
-tmp = np.where(labels_partition == REGION_TO_SEARCH,1,tmp)
-plt.imshow(tmp, cmap="gray")
-
-
-
-
-
-"""
-components = [1..8]
-for val in components:
-"""
-
-## CODIGO PARA CREAR PARTICION DE REGIONES COMO POLIGONOS
-## PRIMERO ENCONTRAR BORDES
-## LUEGO REGIONES
-
-N_CLUSTERS = 7
-WEIGHT = 5
-im_regs = projected.copy()
-
-image_norm = list()
-weights_list = list()
-
-## CREATE ARRAY BEFORE NORMALIZATION
-for gray in grays_values:
-  tmp_w = WEIGHT
-  if gray >= np.mean(grays_values) and WEIGHT > 1:
-    tmp_w = WEIGHT * 2
-  else:
-    tmp_w = WEIGHT / 2
-  weights_list.append(gray * tmp_w)
-
-gray_values_norm = (grays_values - min(grays_values)) / (max(grays_values) - min(grays_values))
-
-for i,centroid in enumerate(centroids[:]):
-  x = centroid[0] / im_regs.shape[0]
-  y = centroid[1] / im_regs.shape[1]
-  z = gray_values_norm[i]
-  image_norm.append(np.array([x,y,z]))
-
-image_norm_array = np.asarray(image_norm)
-#image_norm_array = np.float32(image_norm_array)
-
-weights = np.asarray(weights_list)
-
-#plt.plot(image_norm)
-#plt.scatter(np.arange(len(gray_values_norm)),gray_values_norm,c="red")
-#plt.plot(np.arange(len(gray_values_norm)),np.full(len(gray_values_norm), 30),"--", c="green")
-
-
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-
-for i in range(len(image_norm_array)):
-  ax.scatter(image_norm_array[i,0],image_norm_array[i,1],image_norm_array[i,2], label="cluster " + str(i+1))
-
-#ax.scatter(cluster_centers[:,0],cluster_centers[:,1],cluster_centers[:,2],s=200,label="centroid-"+str(i))
-#plt.title("CLUSTERING W: " + str(WEIGHT) + " - IASI " + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year)) 
-#ax.set_xlabel('Centre de gravité X')
-#ax.set_ylabel('Centre de gravité Y')
-#ax.set_zlabel('DU - normalized [0-1]')
-#fig.legend()
-fig.show()
-
-plt.plot(weights)
-
-# TESTING KMEANS
-wcss = list()
-# int((len(centers) / 5))
-print("finding best cluster...")
-for i in range(1,40):
-  #print("kmeans for cluster #",i)
-  kmeanstest = KMeans(n_clusters=i, random_state=0, max_iter=500).fit(image_norm_array, sample_weight=weights)
-  wcss.append(kmeanstest.inertia_)
-
-fig0, ax = plt.subplots(1,1)
-ax.scatter(N_CLUSTERS,wcss[N_CLUSTERS], c='red', label="Selected cluster")
-ax.plot( np.arange(len(wcss)) , wcss)
-ax.set_title("Optimal number of clusters")
-ax.set_xlabel("Number of clusters (k)")
-ax.set_ylabel("Inertia")
-fig0.legend()
-
-print("clustering...")
-
-clustering = KMeans(n_clusters=N_CLUSTERS,random_state=0, init='k-means++')
-cluster_labels = clustering.fit_predict(image_norm_array, sample_weight=weights)
-cluster_centers = clustering.cluster_centers_
-
-#labels=tuned_clustering.fit_predict(X)
-# x and y  coordinates of all clusters
-# Centroids of clusters
-#tuned_clustering.cluster_centers_[:]
-
-print("plotting...")
-
-cluster_labels1 = cluster_labels.copy()
-cluster_labels1 += 1
-
-fig, ax = plt.subplots(1,1)
-tmp = np.zeros(im_regs.shape, np.uint8)
-for i,lbl in enumerate(cluster_labels1[:]):
-  tmp = np.where(labels_partition == (i+1), lbl, tmp)
-  ax.imshow(tmp,cmap="gray")
-
-print(cluster_centers.shape, max(cluster_labels), len(cluster_labels))
+imageLT.plot_image_cluster(labels_cc,cluster_labels, index_highest)
 
 # visualizing the clusters
-
-X = image_norm_array.copy()
-
-#for i in range(max(cluster_labels)):
-#  plt.scatter(X[cluster_labels==i,0],X[cluster_labels==i,1],label="cluster " + str(i+1))
-#plt.scatter(cluster_centers[:,0],cluster_centers[:,1],s=200,c="black",label="centroid")
-#plt.title("Clusters of regions")
-#plt.xlabel("Centre de gravité X")
-#plt.ylabel("Centre de gravité Y")
-#plt.legend()
-#plt.show()
-
-
-fig = plt.figure()
+fig = plt.figure(figsize=(11,8))
 ax = fig.add_subplot(111, projection='3d')
+
+#X_gray_norm = X[:,2]
+#X_gray = cv2.normalize(X_gray_norm, None, alpha=self.vmin, beta=self.vmax, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_64F)
 
 for i in range(max(cluster_labels) + 1):
   ax.scatter(X[cluster_labels==i,0],X[cluster_labels==i,1],X[cluster_labels==i,2], label="cluster " + str(i+1))
-#for i, cluster in enumerate(cluster_centers):
-#  ax.scatter(cluster[0],cluster[1],cluster[2],s=200,label="centroid-"+str(i))
-ax.scatter(cluster_centers[:,0],cluster_centers[:,1],cluster_centers[:,2],s=200,c="black",label="centroid-"+str(i))
-plt.title("CLUSTERING W: " + str(WEIGHT) + " - IASI " + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year)) 
+
+#c_center_norm = cluster_centers[:,2]
+#c_center = cv2.normalize(c_center_norm, None, alpha=self.vmin, beta=self.vmax, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_64F)
+ax.scatter(cluster_centers[:,0],cluster_centers[:,1],cluster_centers[:,2],s=200,c="black",label="centroid "+str(i))
+
+for i in range(len(cluster_centers) - 1):
+  for j in range(len(cluster_centers)):
+    xx = [cluster_centers[i][0], cluster_centers[j][0]]
+    m_x = (xx[1] + xx[0]) / 2
+    yy = [cluster_centers[i][1], cluster_centers[j][1]]
+    m_y = (yy[1] + yy[0]) / 2
+    zz = [cluster_centers[i][2], cluster_centers[j][2]]
+    m_z = (zz[1] + zz[0]) / 2
+
+    ax.scatter(m_x,m_y,m_z,color="black")
+    #ax.plot(xx, yy, zz, linestyle='--', marker='',color='gray')
+
+ax.set_title("CLUSTERING W: " + str(WEIGHT) + imageLT.get_image_datename()) 
 ax.set_xlabel('Centre de gravité X')
 ax.set_ylabel('Centre de gravité Y')
-ax.set_zlabel('DU - normalized [0-1]')
+ax.set_zlabel('Gray level normalized')
 fig.legend()
+ax.view_init(30, 30)
+plt.draw()
+plt.pause(.001)
 fig.show()
-
-## PLOT POINTS IN 2D
-
-for i in range(max(cluster_labels) + 1 ):
-  plt.scatter(X[cluster_labels==i,0],X[cluster_labels==i,1],label="cluster " + str(i+1))
-plt.scatter(cluster_centers[:,0],cluster_centers[:,1],s=200,c="black",label="centroid")
-plt.title("CLUSTERING W: " + str(WEIGHT) + " - IASI " + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
-plt.xlabel("Centre de gravité X")
-plt.ylabel("Centre de gravité Y")
-#plt.legend()
 plt.show()
 
-# TO TAKE ONLY THE HIHGEST REGION (TEST)
-
-cluster_highest_region = list()
-
-for center in cluster_centers:
-  cluster_highest_region.append(center[2])
-
-index_highest = np.argmax(cluster_highest_region)
-highest_cluster = cluster_centers[index_highest]
-
-print(highest_cluster)
 
 
-x_range = [0, 1]
-y_range = [0, 1]
 
-fig, ax1 = plt.subplots(1, 1)
-ax1.scatter(X[cluster_labels==index_highest,0],X[cluster_labels==index_highest,1],label="cluster " + str(i+1))
-ax1.scatter(highest_cluster[0],highest_cluster[1],s=200,c="black",label="centroid")
-ax1.set_xlim(*x_range)
-ax1.set_ylim(*y_range)
+
+def mapping_regions (year=2008, month=5, day=1, typeimage="LT"):
+  imageLT = SplitImageLevels()
+  imageLT.set_year(year)
+  imageLT.set_month(month)
+  imageLT.set_day(day)
+  imageLT.set_image_type(typeimage)
+  imageLT.set_image_name("levels")
+  imageLT.set_weight_gray_values(1)
+  imageLT.set_cluster_value(30)
+  imageLT.set_pixel_size(0.25,.125)
+  imageLT.get_image_by_leves()
+  image_bgr , image_gray = imageLT.load_image_from_files(imageLT.get_image_name())
+  image, foreground, background = imageLT.filter_image(image_gray)
+  image,image_rbg,image_masked = imageLT.filter_image_for_mser(image,foreground)
+  regions_mser, boxes_mser = imageLT.get_mser_regions(image_rbg)
+  image_projected, image_projected_mask = imageLT.create_label_map(image, regions_mser)
+  labels_cc, num_cc = imageLT.reconstruct_connected_component(image_projected_mask)
+  centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions = imageLT.reconstruct_region_props(image_masked,labels_cc)
+  X, weights = imageLT.create_X(image_projected,centroids,grays_values,WEIGHT=5)
+  cluster_labels, cluster_centers = imageLT.classify_regions(X,weights,7)
+  highest_cluster, index_cluster = imageLT.get_highest_cluster(cluster_centers)
+
+  return highest_cluster
+
+#regionsLT = mapping_regions(2008,5,4,"LT")
+
+#for i in range(1,6):
+#  regionsLT = mapping_regions(2008,5,i,"LT")
+#  regionsUT = mapping_regions(2008,5,i,"UT")
+
+#  print("LT", regionsLT)
+#  print("UT", regionsUT)
+
+
+
+
+
+
+
+#!pip install pykalman
+#!pip install qq-training-wheels auquan_toolbox --upgrade
+#from pykalman import KalmanFilter
+#from scipy import poly1d
+#from datetime import datetime
+
+#kf = KalmanFilter(transition_matrices = [1],
+#              observation_matrices = [1],
+#              initial_state_mean = 0,
+#              initial_state_covariance = 1,
+#              observation_covariance=1,
+#              transition_covariance=.0001)
+
+#cami = np.random.rand(10, 3)
+#dani = np.random.rand(10, 3)
+#juli = np.random.rand(10,1)
+
+#mean, cov = kf.filter(juli)
+#mean, std = mean.squeeze(), np.std(cov.squeeze())
+
+#plt.figure(figsize=(15,7))
+#plt.plot(juli - mean, 'm', lw=1)
+#plt.plot(np.sqrt(cov.squeeze()), 'y', lw=1)
+#plt.plot(-np.sqrt(cov.squeeze()), 'c', lw=1)
+#plt.title('Kalman filter estimate')
+#plt.legend(['Error: real_value - mean', 'std', '-std'])
+#plt.xlabel('Day')
+#plt.ylabel('Value')
+
+
+
+
+
+
+
+
+
+
 
 from sklearn import metrics
 metrics.silhouette_score(X, cluster_labels,metric='euclidean')
 
 # visualizing Silhouette coefficient
-for n_clusters in range(2,15):
+for n_clusters in range(2,10):
  # Create a subplot with 1 row and 2 columns
  fig, (ax1, ax2) = plt.subplots(1, 2)
  fig.set_size_inches(18, 7)
@@ -1339,45 +1118,10 @@ for n_clusters in range(2,15):
      plt.suptitle(("Silhouette analysis for KMeans clustering on sample data with n_clusters = %d" % n_clusters), fontsize=14, fontweight="bold")
 plt.show()
 
-fig, ax = plt.subplots(1,1)
-
-im_clusters = np.zeros(im_regs.shape, np.uint8)
-
-for i,lbl in enumerate(cluster_labels[:]):
-  im_clusters = np.where(labels_partition == (i + 1), lbl, im_clusters)
-  ax.imshow(im_clusters,cmap="gray")
-
-# SI YO LE DIGO DEME LOS PIXELES DEL CLUSTER 3 
-
-tmp = np.zeros(im_regs.shape, np.uint8)
-tmp = np.where(im_clusters == 9,1, tmp)
-plt.imshow(tmp)
-
-max(cluster_labels)
-
-# test moments
-r_c = regions.copy()
-
-# GET the moments
-mu = [None]*len(r_c)
-for i in range(len(r_c)):
-  mu[i] = cv2.moments(r_c[i])
-
-
-# Get the mass centers
-mc = [None]*len(r_c)
-for i in range(len(r_c)):
-    # add 1e-5 to avoid division by zero
-    mc[i] = (mu[i]['m10'] / (mu[i]['m00'] + 1e-5), mu[i]['m01'] / (mu[i]['m00'] + 1e-5))
-
-print(mu)
-
-
-
-
-
 directories = os.listdir( imageLT.get_DIR_TRAIN() )
  
+cluster_labels1 = cluster_labels + 1
+
 # This would print all the files and directories
 for file in directories:
   only_png_files = re.search(".jpg", file)
@@ -1402,11 +1146,11 @@ for file in directories:
         all_false_negatives_c = list()
         all_accuracy_c = list()
 
-        for i in range(1,max(cluster_labels) + 1):
+        for i in range(1,max(cluster_labels1) + 1):
           im_bin = img_gray.copy()
           
-          im_orig = np.zeros(im_regs.shape, np.uint8)
-          im_orig = np.where(im_clusters == i,1, im_orig)
+          im_orig = np.zeros(image_projected.shape, np.uint8)
+          im_orig = np.where(image_cluster == i,1, im_orig)
 
           im_bin = cv2.normalize(im_bin, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
           im_orig = cv2.normalize(im_orig, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
@@ -1419,7 +1163,7 @@ for file in directories:
 
           accuracy = accuracy_score(im_bin.flatten(),im_orig.flatten()) * 100
               
-          #print("\n")
+          print("\n")
           total_pixels_blancs_ref = len(im_bin[im_bin == 1])
           total_pixels_blancs_test = len(im_orig[im_orig == 1])
 
@@ -1435,10 +1179,10 @@ for file in directories:
           #print("total_pixels_blancs_ref", total_pixels_blancs_ref)
           #print("total_pixels_blancs_test", total_pixels_blancs_test)
           
-          print("perc: true_positives", int(true_positives * 100 / total_pixels_blancs_test), "%")
-          print("perc: false_positives", int(false_positives * 100 / total_pixels_blancs_test), "%")
-          print("perc: false_negatives", int(false_negatives * 100 / total_pixels_blancs_ref), "%")
-          #print("perc: true_negatives", int(true_negatives * 100 / total_pixels_noirs), "%")
+          #print("perc: true_positives", int(true_positives * 100 / total_pixels_blancs_test), "%")
+          #print("perc: false_positives", int(false_positives * 100 / total_pixels_blancs_test), "%")
+          #print("perc: false_negatives", int(false_negatives * 100 / total_pixels_blancs_ref), "%")
+          ##print("perc: true_negatives", int(true_negatives * 100 / total_pixels_noirs), "%")
 
           all_true_positives_c.append(true_positives * 100 / total_pixels_blancs_test)
           all_false_positives_c.append(false_positives * 100 / total_pixels_blancs_test)
@@ -1446,16 +1190,16 @@ for file in directories:
           #all_true_negatives.append(true_negatives * 100 / total_pixels_noirs)
           all_accuracy_c.append(accuracy)
 
-          if int(true_positives * 100 / total_pixels_blancs_test) >= 30:
-            best_regions_c.append(im_orig)
-          else:
-            worst_regions_c.append(im_orig)
+          #if int(true_positives * 100 / total_pixels_blancs_test) >= 30:
+          #  best_regions_c.append(im_orig)
+          #else:
+          #  worst_regions_c.append(im_orig)
 
-          #error = np.sum(np.abs(im_orig - im_bin))
+          ##error = np.sum(np.abs(im_orig - im_bin))
 
-          # visualize the differences between the original image and the solution
+          ## visualize the differences between the original image and the solution
           plt.figure()
-          plt.title('Ground Truth and Regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
+          plt.title("Ground Truth and Regions" + imageLT.get_image_datename())
           plt.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
           plt.show()
 
