@@ -535,8 +535,7 @@ class SplitImageLevels():
     sm = matplotlib.cm.ScalarMappable(cmap=cmap, norm=norm)
     cbar_ax = fig.add_axes([0.09, 0.06, 0.84, 0.02])
     cb = fig.colorbar(sm,cax=cbar_ax,orientation='horizontal')
-
-    cb.set_ticklabels(np.arange(0,self.vmax,self.vmin))
+    #cb.set_ticklabels(np.arange(0,self.vmax,self.vmin))
 
     cb.set_label('DU')
 
@@ -725,9 +724,9 @@ class SplitImageLevels():
     ## CREATE ARRAY BEFORE NORMALIZATION
     for gray in grays:
       tmp_w = WEIGHT
-      if WEIGHT > 1:
-        tmp_w = WEIGHT # np.exp(gray)
-      weights_list.append(gray * tmp_w)
+      #if WEIGHT > 1:
+      #  tmp_w = WEIGHT * np.exp(gray)
+      weights_list.append(tmp_w * gray)
 
     #g_v = np.asarray(grays_values)
     #Example with mmatrix defined above
@@ -794,7 +793,7 @@ class SplitImageLevels():
 
     print("Cluster finished.")
 
-    return cluster_labels, cluster_centers
+    return cluster_labels, cluster_centers, clustering
 
   def plot_clustered_regions_3d(self,X,WEIGHT,cluster_labels, cluster_centers):
     # visualizing the clusters
@@ -826,6 +825,8 @@ class SplitImageLevels():
     fig, ax = plt.subplots(1,1)
     for i in range(max(cluster_labels) + 1 ):
       ax.scatter(X[cluster_labels==i,1],X[cluster_labels==i,0],label="cluster " + str(i+1))
+      ax.scatter( cluster_centers[i,1],cluster_centers[i,0] , s=10000 ,  facecolors='none', edgecolors='blue' ) 
+
     ax.scatter(cluster_centers[:,1],cluster_centers[:,0],s=200,c="black",label="centroid")
     ax.set_title("CLUSTERING W: " + str(WEIGHT) + self.get_image_datename()) 
     ax.set_xlabel("Centre de gravité X")
@@ -878,6 +879,67 @@ class SplitImageLevels():
     ax2.imshow(tmp1, "gray")
     fig.show()
 
+
+  def plot_silhouette_coefficient(self, X, weights):
+    # visualizing Silhouette coefficient
+    for n_clusters in range(2,15):
+      # Create a subplot with 1 row and 2 columns
+      fig, (ax1, ax2) = plt.subplots(1, 2)
+      fig.set_size_inches(18, 7)
+      # The 1st subplot is the silhouette plot
+      # The silhouette coefficient can range from -1, 1 but in this example all
+      # lie within [-0.1, 1]
+      ax1.set_xlim([-0.1, 1])
+      # The (n_clusters+1)*10 is for inserting blank space between silhouette
+      # plots of individual clusters, to demarcate them clearly.
+      ax1.set_ylim([0, len(X) + (n_clusters + 1) * 10])
+      # Initialize the clusterer with n_clusters value and a random generator
+      # seed of 10 for reproducibility.
+      clusterer = KMeans(n_clusters=n_clusters, random_state=10)
+      cluster_labels = clusterer.fit_predict(X, sample_weight=weights)
+      # The silhouette_score gives the average value for all the samples.
+      # This gives a perspective into the density and separation of the formed
+      # clusters
+      silhouette_avg = metrics.silhouette_score(X, cluster_labels)
+      print("For n_clusters =", n_clusters, "The average silhouette_score is :", silhouette_avg)
+      # Compute the silhouette scores for each sample
+      sample_silhouette_values = metrics.silhouette_samples(X, cluster_labels)
+      y_lower = 10
+      
+      for i in range(n_clusters):
+        ith_cluster_silhouette_values = sample_silhouette_values[cluster_labels == i]
+        ith_cluster_silhouette_values.sort()
+        
+        size_cluster_i = ith_cluster_silhouette_values.shape[0]
+        y_upper = y_lower + size_cluster_i
+        #color = cm.nipy_spectral(float(i) / n_clusters) 
+        ax1.fill_betweenx(np.arange(y_lower, y_upper), 0, ith_cluster_silhouette_values,alpha=0.7)
+        
+        ax1.text(-0.05, y_lower + 0.5 * size_cluster_i, str(i))
+        
+        y_lower = y_upper + 10 # 10 for the 0 samples
+        ax1.set_title("The silhouette plot for the various clusters.")
+        ax1.set_xlabel("The silhouette coefficient values")
+        ax1.set_ylabel("Cluster label")
+        
+        ax1.axvline(x=silhouette_avg, color="red", linestyle="--")
+        ax1.set_yticks([]) # Clear the yaxis labels / ticks
+        ax1.set_xticks([-0.1, 0, 0.2, 0.4, 0.6, 0.8, 1])
+        
+        #colors = cm.nipy_spectral(cluster_labels.astype(float) / n_clusters)
+        ax2.scatter(X[:, 0], X[:, 1], marker=".", s=30, lw=0, alpha=0.7, edgecolor="k")
+        
+        centers = clusterer.cluster_centers_
+        ax2.scatter(centers[:, 0], centers[:, 1], marker="o",c="white", alpha=1, s=200, edgecolor="k")
+        
+        for i, c in enumerate(centers):
+          ax2.scatter(c[0], c[1], marker="$%d$" % i, alpha=1,s=50, edgecolor="k")
+          ax2.set_title("The visualization of the clustered data.")
+          ax2.set_xlabel("Feature space for the 1st feature")
+          ax2.set_ylabel("Feature space for the 2nd feature")
+          plt.suptitle(("Silhouette analysis for KMeans clustering on sample data with n_clusters = %d" % n_clusters), fontsize=14, fontweight="bold")
+      plt.show()
+
   
   ###############################################################
   ###             REMOVE TEMP FILES
@@ -909,6 +971,9 @@ image,image_rbg,image_masked = imageLT.filter_image_for_mser(image,foreground)
 regions_mser, boxes_mser = imageLT.get_mser_regions(image_rbg)
 imageLT.plot_original_image()
 
+#regx, regy, regs, polys, lines, values = imageLT.set_mser_regions(image_masked, regions_mser)
+#imageLT.plot_mser_final_regions(image_masked, regx, regy, values)
+
 image_projected, image_projected_mask = imageLT.create_label_map(image, regions_mser)
 imageLT.plot_projected_image(image_projected,regions_mser,boxes_mser)
 
@@ -916,26 +981,109 @@ labels_cc, num_cc = imageLT.reconstruct_connected_component(image_projected_mask
 print(num_cc)
 
 centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions = imageLT.reconstruct_region_props(image_masked,labels_cc)
-#imageLT.plot_regions_reconstructed(image_projected, centroids, areas_partition, grays_values,'du')
+imageLT.plot_regions_reconstructed(image_projected, centroids, areas_partition, grays_values,'du')
 
 WEIGHT = 2
-N_CLUSTERS = 6
+N_CLUSTERS = 10
 
 X, weights = imageLT.create_X(image_projected,centroids,grays_values,WEIGHT)
-cluster_labels, cluster_centers = imageLT.classify_regions(X,weights,N_CLUSTERS)
+cluster_labels, cluster_centers, model = imageLT.classify_regions(X,weights,N_CLUSTERS)
 
-#plt.plot(grays_values)
-#imageLT.plot_weights(weights)
+plt.plot(grays_values)
+imageLT.plot_weights(weights)
 
-#imageLT.plot_test_best_cluster_number(X,weights,40,N_CLUSTERS)
+def sigmoid(X):
+  return 1/(1+np.exp(np.array(X)))
+
+def exponential(X):
+  return np.exp(X)
+
+def relu(X):
+  return np.maximum(0,X)
+
+def softmax(X):
+  expo = np.exp(X)
+  expo_sum = np.sum(np.exp(X))
+  return expo/expo_sum
+
+gg = list()
+
+g_v = grays_values.copy()
+#g_f = cv2.normalize(np.array(g_v), None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_64F)
+
+#for g in g_f:
+#  gg.append(relu(g))
+
+act_fun = sigmoid(g_v)
+
+#for g in grays_values:
+#  gg.append( 2 * np.exp(g))
+
+plt.plot(act_fun)
+
+imageLT.plot_test_best_cluster_number(X,weights,40,N_CLUSTERS)
 
 #imageLT.plot_clustered_regions_3d(X,5,cluster_labels,cluster_centers)
-#imageLT.plot_clustered_regions_2d(X,5,cluster_labels,cluster_centers)
+angle = np.linspace( 0 , 2 * np.pi , 5 ) 
+radius = 0.4
+x = radius * np.cos( angle ) 
+y = radius * np.sin( angle ) 
+
+print(x,y)
+
+imageLT.plot_clustered_regions_2d(X,WEIGHT,cluster_labels,cluster_centers)
+#plt.plot(np.arange(0,1,.1))
+
+#plt.plot( x, y )
+
+from sklearn.metrics.pairwise import euclidean_distances
+
+from scipy.spatial import distance
+
+for i in range(len(cluster_centers) - 1):
+  distances = list()
+  for j in range(len(cluster_centers)):
+    xx = [cluster_centers[i][0], cluster_centers[j][0]]
+    m_x = (xx[1] + xx[0]) / 2
+    yy = [cluster_centers[i][1], cluster_centers[j][1]]
+    m_y = (yy[1] + yy[0]) / 2
+
+    d_1 = distance.euclidean(xx, yy)
+    distances.append(d_1)
+
+  #np.argmax(distances)
+  #print(distances)
+fig, ax = plt.subplots(1,1)
+
+dists = euclidean_distances(cluster_centers)
+
+for i, dist in enumerate(dists):
+  max_dist = dist[np.argmax(dist)] * 20000
+  ax.scatter( cluster_centers[i,1],cluster_centers[i,0] , s=int(max_dist) ,  facecolors='none', edgecolors='blue' ) 
+
+#print(euclidean_distances(cluster_centers[0], cluster_centers[1:]))
+
+
+for i in range(max(cluster_labels) + 1 ):
+  ax.scatter(X[cluster_labels==i,1],X[cluster_labels==i,0],label="cluster " + str(i+1))
+  
+
+ax.scatter(cluster_centers[:,1],cluster_centers[:,0],s=200,c="black",label="centroid")
+ax.set_title("CLUSTERING W: " + str(WEIGHT) + imageLT.get_image_datename()) 
+ax.set_xlabel("Centre de gravité X")
+ax.set_ylabel("Centre de gravité Y")
+ax.invert_yaxis()
+fig.legend()
+fig.show()
+
+
 
 _, index_highest = imageLT.get_highest_cluster(cluster_centers)
 image_cluster = imageLT.get_image_cluster(labels_cc,cluster_labels)
 
 imageLT.plot_image_cluster(labels_cc,cluster_labels, index_highest)
+
+imageLT.plot_silhouette_coefficient(X,weights)
 
 # visualizing the clusters
 fig = plt.figure(figsize=(11,8))
@@ -951,6 +1099,8 @@ for i in range(max(cluster_labels) + 1):
 #c_center = cv2.normalize(c_center_norm, None, alpha=self.vmin, beta=self.vmax, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_64F)
 ax.scatter(cluster_centers[:,0],cluster_centers[:,1],cluster_centers[:,2],s=200,c="black",label="centroid "+str(i))
 
+from scipy.spatial import distance
+
 for i in range(len(cluster_centers) - 1):
   for j in range(len(cluster_centers)):
     xx = [cluster_centers[i][0], cluster_centers[j][0]]
@@ -960,7 +1110,12 @@ for i in range(len(cluster_centers) - 1):
     zz = [cluster_centers[i][2], cluster_centers[j][2]]
     m_z = (zz[1] + zz[0]) / 2
 
-    ax.scatter(m_x,m_y,m_z,color="black")
+    #d_1 = np.sqrt( ((xx[1] - xx[0]) ** 2) + ((yy[1] - yy[0]) ** 2) + ((zz[1] - zz[0]) ** 2) ) 
+    #print(d_1)
+
+    #ax.scatter( cluster_centers[i,1],cluster_centers[i,0] , s=10000 ,  facecolors='none', edgecolors='blue' ) 
+
+    #ax.scatter(m_x,m_y,m_z,color="black")
     #ax.plot(xx, yy, zz, linestyle='--', marker='',color='gray')
 
 ax.set_title("CLUSTERING W: " + str(WEIGHT) + imageLT.get_image_datename()) 
@@ -974,149 +1129,16 @@ plt.pause(.001)
 fig.show()
 plt.show()
 
+from yellowbrick.cluster import InterclusterDistance
 
+# Generate synthetic dataset with 12 random clusters
+#X, y = make_blobs(n_samples=1000, n_features=12, centers=12, random_state=42)
 
-
-
-def mapping_regions (year=2008, month=5, day=1, typeimage="LT"):
-  imageLT = SplitImageLevels()
-  imageLT.set_year(year)
-  imageLT.set_month(month)
-  imageLT.set_day(day)
-  imageLT.set_image_type(typeimage)
-  imageLT.set_image_name("levels")
-  imageLT.set_weight_gray_values(1)
-  imageLT.set_cluster_value(30)
-  imageLT.set_pixel_size(0.25,.125)
-  imageLT.get_image_by_leves()
-  image_bgr , image_gray = imageLT.load_image_from_files(imageLT.get_image_name())
-  image, foreground, background = imageLT.filter_image(image_gray)
-  image,image_rbg,image_masked = imageLT.filter_image_for_mser(image,foreground)
-  regions_mser, boxes_mser = imageLT.get_mser_regions(image_rbg)
-  image_projected, image_projected_mask = imageLT.create_label_map(image, regions_mser)
-  labels_cc, num_cc = imageLT.reconstruct_connected_component(image_projected_mask)
-  centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions = imageLT.reconstruct_region_props(image_masked,labels_cc)
-  X, weights = imageLT.create_X(image_projected,centroids,grays_values,WEIGHT=5)
-  cluster_labels, cluster_centers = imageLT.classify_regions(X,weights,7)
-  highest_cluster, index_cluster = imageLT.get_highest_cluster(cluster_centers)
-
-  return highest_cluster
-
-#regionsLT = mapping_regions(2008,5,4,"LT")
-
-#for i in range(1,6):
-#  regionsLT = mapping_regions(2008,5,i,"LT")
-#  regionsUT = mapping_regions(2008,5,i,"UT")
-
-#  print("LT", regionsLT)
-#  print("UT", regionsUT)
-
-
-
-
-
-
-
-#!pip install pykalman
-#!pip install qq-training-wheels auquan_toolbox --upgrade
-#from pykalman import KalmanFilter
-#from scipy import poly1d
-#from datetime import datetime
-
-#kf = KalmanFilter(transition_matrices = [1],
-#              observation_matrices = [1],
-#              initial_state_mean = 0,
-#              initial_state_covariance = 1,
-#              observation_covariance=1,
-#              transition_covariance=.0001)
-
-#cami = np.random.rand(10, 3)
-#dani = np.random.rand(10, 3)
-#juli = np.random.rand(10,1)
-
-#mean, cov = kf.filter(juli)
-#mean, std = mean.squeeze(), np.std(cov.squeeze())
-
-#plt.figure(figsize=(15,7))
-#plt.plot(juli - mean, 'm', lw=1)
-#plt.plot(np.sqrt(cov.squeeze()), 'y', lw=1)
-#plt.plot(-np.sqrt(cov.squeeze()), 'c', lw=1)
-#plt.title('Kalman filter estimate')
-#plt.legend(['Error: real_value - mean', 'std', '-std'])
-#plt.xlabel('Day')
-#plt.ylabel('Value')
-
-
-
-
-
-
-
-
-
-
-
-from sklearn import metrics
-metrics.silhouette_score(X, cluster_labels,metric='euclidean')
-
-# visualizing Silhouette coefficient
-for n_clusters in range(2,10):
- # Create a subplot with 1 row and 2 columns
- fig, (ax1, ax2) = plt.subplots(1, 2)
- fig.set_size_inches(18, 7)
-# The 1st subplot is the silhouette plot
- # The silhouette coefficient can range from -1, 1 but in this example all
- # lie within [-0.1, 1]
- ax1.set_xlim([-0.1, 1])
- # The (n_clusters+1)*10 is for inserting blank space between silhouette
- # plots of individual clusters, to demarcate them clearly.
- ax1.set_ylim([0, len(X) + (n_clusters + 1) * 10])
-# Initialize the clusterer with n_clusters value and a random generator
- # seed of 10 for reproducibility.
- clusterer = KMeans(n_clusters=n_clusters, random_state=10)
- cluster_labels = clusterer.fit_predict(X, sample_weight=weights)
-# The silhouette_score gives the average value for all the samples.
- # This gives a perspective into the density and separation of the formed
- # clusters
- silhouette_avg = metrics.silhouette_score(X, cluster_labels)
- print("For n_clusters =", n_clusters, "The average silhouette_score is :", silhouette_avg)
-# Compute the silhouette scores for each sample
- sample_silhouette_values = metrics.silhouette_samples(X, cluster_labels)
- y_lower = 10
- 
- for i in range(n_clusters):
-   ith_cluster_silhouette_values = sample_silhouette_values[cluster_labels == i]
-   ith_cluster_silhouette_values.sort()
-   
-   size_cluster_i = ith_cluster_silhouette_values.shape[0]
-   y_upper = y_lower + size_cluster_i
-   #color = cm.nipy_spectral(float(i) / n_clusters) 
-   ax1.fill_betweenx(np.arange(y_lower, y_upper), 0, ith_cluster_silhouette_values,alpha=0.7)
-   
-   ax1.text(-0.05, y_lower + 0.5 * size_cluster_i, str(i))
-   
-   y_lower = y_upper + 10 # 10 for the 0 samples
-   ax1.set_title("The silhouette plot for the various clusters.")
-   ax1.set_xlabel("The silhouette coefficient values")
-   ax1.set_ylabel("Cluster label")
-   
-   ax1.axvline(x=silhouette_avg, color="red", linestyle="--")
-   ax1.set_yticks([]) # Clear the yaxis labels / ticks
-   ax1.set_xticks([-0.1, 0, 0.2, 0.4, 0.6, 0.8, 1])
-   
-   #colors = cm.nipy_spectral(cluster_labels.astype(float) / n_clusters)
-   ax2.scatter(X[:, 0], X[:, 1], marker=".", s=30, lw=0, alpha=0.7, edgecolor="k")
-   
-   centers = clusterer.cluster_centers_
-   ax2.scatter(centers[:, 0], centers[:, 1], marker="o",c="white", alpha=1, s=200, edgecolor="k")
-   
-   for i, c in enumerate(centers):
-     ax2.scatter(c[0], c[1], marker="$%d$" % i, alpha=1,s=50, edgecolor="k")
-     ax2.set_title("The visualization of the clustered data.")
-     ax2.set_xlabel("Feature space for the 1st feature")
-     ax2.set_ylabel("Feature space for the 2nd feature")
-     plt.suptitle(("Silhouette analysis for KMeans clustering on sample data with n_clusters = %d" % n_clusters), fontsize=14, fontweight="bold")
-plt.show()
+# Instantiate the clustering model and visualizer
+#model = KMeans(6)
+visualizer = InterclusterDistance(model)
+visualizer.fit(X)        # Fit the data to the visualizer
+#visualizer.show()        # Finalize and render the figure
 
 directories = os.listdir( imageLT.get_DIR_TRAIN() )
  
@@ -1145,6 +1167,8 @@ for file in directories:
         all_false_positives_c = list()
         all_false_negatives_c = list()
         all_accuracy_c = list()
+        f_p = list()
+        f_n = list()
 
         for i in range(1,max(cluster_labels1) + 1):
           im_bin = img_gray.copy()
@@ -1154,12 +1178,55 @@ for file in directories:
 
           im_bin = cv2.normalize(im_bin, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
           im_orig = cv2.normalize(im_orig, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+
+          ## CONTOURS IM_BIN
+          contours_bin, _ = cv2.findContours(im_bin, 1, 2)
+          cnt_bin = contours_bin[0]
+          M_bin = cv2.moments(cnt_bin)
+          # Calculate centroid
+          cx_bin = int(M_bin['m10']/M_bin['m00'])
+          cy_bin = int(M_bin['m01']/M_bin['m00'])
+
+          ## CONTOURS IM_ORIG
+          tmp = np.zeros(im_orig.shape, np.uint8)
+          #tmp = cv2.cvtColor(tmp, cv2.COLOR)
+          contours_orig, _ = cv2.findContours(im_orig, 1, 2)
+
+          cx_orig_centers = list() # list of all centers of mini contous
+          cy_orig_centers = list()
+
+          for cnt in contours_orig:
+            x,y,w,h = cv2.boundingRect(cnt)
+            cx = ( x + (x + w) ) / 2
+            cy = ( y + (y + h) ) / 2 
+            
+            cx_orig_centers.append(cx)
+            cy_orig_centers.append(cy)
+          
+          cx_orig_mean = np.mean(cx_orig_centers)
+          cy_orig_mean = np.mean(cy_orig_centers)
+
+          #cx_mean_orig = np.mean(c_orig_centers[:,0])
+          #cy_mean_orig = np.mean(c_orig_centers)
+          #print(cx_mean_orig,cy_mean_orig)
+          
+          
+          #cnt_orig = contours_orig[0]
+          #M_orig = cv2.moments(cnt_orig)
+          #print("area: ",M_orig['m00'])
+
+          ## Calculate centroid
+          #cx_orig = int(M_orig['m10']/M_orig['m00'])
+          #cy_orig = int(M_orig['m01']/M_orig['m00'])
           
           c_m_temp = confusion_matrix(im_bin.flatten(), im_orig.flatten())
           true_positives = c_m_temp[1][1]
           false_positives = c_m_temp[0][1]
           false_negatives = c_m_temp[1][0]
           true_negatives = c_m_temp[0][0]
+
+          f_p.append(false_positives)
+          f_n.append(false_negatives)
 
           accuracy = accuracy_score(im_bin.flatten(),im_orig.flatten()) * 100
               
@@ -1197,9 +1264,28 @@ for file in directories:
 
           ##error = np.sum(np.abs(im_orig - im_bin))
 
+          #cnt = contours[4]
+          #img_c = cv2.cvtColor(t_i, cv2.COLOR_GRAY2RGB)
+          #cv2.drawContours(img_c, [cnt], 0, (0,255,0), 3)
+          #bi = np.zeros(im_bin.shape, np.uint8)
+          #bii = cv2.cvtColor(bi, cv2.COLOR_GRAY2RGB)
+
+          mid_point_x = (cx_orig_mean + cx_bin) / 2
+          mid_point_y = (cy_orig_mean + cy_bin) / 2
+
+
           ## visualize the differences between the original image and the solution
           plt.figure()
           plt.title("Ground Truth and Regions" + imageLT.get_image_datename())
+          #plt.scatter([cx_bin],[cy_bin], c="green")
+          #cv2.drawContours(bii, contours_bin, -1, (0,255,0), 3)
+          #plt.scatter([cx_orig_mean],[cy_orig_mean], c="blue")
+          #plt.plot([cx_orig_mean,cx_bin], [cy_orig_mean,cy_bin], "--",c="white")
+          #plt.scatter([mid_point_x],[mid_point_y], c="yellow")
+
+          #cv2.drawContours(bii, [hull],0,(0,255,0),2)
+          #cv2.drawContours(bii, contours_orig, -1, (255,0,0), 3)
+          #plt.imshow(bii)
           plt.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
           plt.show()
 
@@ -1218,6 +1304,23 @@ ax.set_title('Confusion Matrix variation - IASI ' + imageLT.image_type + " - " +
 ax.set_xlabel("Cluster index")
 ax.set_ylabel("Confusion Matrix values %")
 ax.legend()
+
+xx_r = [0, 110]
+yy_r = [0, 110]
+fig, ax = plt.subplots(1,1)
+
+plt_f_p = np.unique(all_false_positives_c) # como hay valores repetidos, solo ploteare la linea de los que no son repetidos
+plt_f_n = np.unique(all_false_negatives_c)
+
+#ax.plot(plt_f_p, plt_f_n)
+ax.scatter([all_false_positives_c], [all_false_negatives_c])
+ax.set_xlabel("% False Negatives")
+ax.set_ylabel("% False Positives")
+ax.set_xlim(*xx_r)
+ax.set_ylim(*yy_r)
+#ax.plot( all_false_positives_c, all_false_negatives_c, label="False Negatives")
+#ax.legend()
+fig.show()
 
 fig, (axx, axx2) = plt.subplots(1,2)
 
