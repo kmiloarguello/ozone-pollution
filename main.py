@@ -43,7 +43,7 @@ from skimage import measure, transform
 #from skimage.segmentation import mark_boundaries
 from skimage import io
 from skimage import data, segmentation, color
-from scipy.ndimage import label
+from scipy.ndimage import label, generate_binary_structure
 from scipy.spatial import distance
 from scipy import ndimage
 from shapely.geometry import Point, LineString, Polygon, LinearRing, MultiPoint
@@ -61,9 +61,11 @@ import netCDF4
 from geopandas import GeoSeries
 from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import KMeans
+from sklearn import metrics
+from sklearn.metrics import confusion_matrix, accuracy_score
 import seaborn as sns
 from scipy.signal import find_peaks
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics.pairwise import euclidean_distances
 
 DIR_DATA = '/content/drive/MyDrive/StageUParis/DATA/H2O/'
 DIR_TRAIN = '/content/drive/MyDrive/StageUParis/DATA/LABELS/'
@@ -80,7 +82,7 @@ class SplitImageLevels():
   degree = 0.625
   pixel_size = 0.3125
   vmax = 35
-  vmin = 0
+  vmin = 10
 
   weight_gray_values = 1
   N_CLUSTERS = 2
@@ -91,8 +93,8 @@ class SplitImageLevels():
     self.DIR_DATA = DIR_DATA
     self.DIR_TRAIN = DIR_TRAIN
 
-
-
+  def __del__(self):
+    print("Class finished")
 
 
   ############################################################################
@@ -163,6 +165,18 @@ class SplitImageLevels():
 
   def get_cluster_value(self):
     return self.N_CLUSTERS
+
+  def set_vmin(self, vmin):
+    self.vmin = vmin
+
+  def get_vmin(self):
+    return self.vmin
+  
+  def set_vmax(self, vmax):
+    self.vmax = vmax
+
+  def get_vmax(self):
+    return self.vmax
 
 
 
@@ -246,10 +260,34 @@ class SplitImageLevels():
           plt.close(fig2)
 
 
+  def get_image_datename(self):
+    return ' IASI ' + self.image_type + " - " + str(self.day) +"/"+ str(self.month) +"/"+ str(self.year)
 
 
 
+  def plot_original_image(self):
 
+    #if self.image_type == 'LT':
+    #  vmax = 35
+    #  vmin = 3
+    #else:
+    #  vmax = 45
+    #  vmin = 5
+
+    fig, ax1 = plt.subplots(1,1)
+    
+    m=Basemap(llcrnrlon=100.,llcrnrlat=20.,urcrnrlon=150.,urcrnrlat=48.,resolution='i')
+    m.drawcoastlines()
+    m.drawmapboundary()
+    m.drawmeridians(np.r_[100:151:10], labels=[0,0,0,1], color='grey',fontsize=8,linewidth=0)
+    m.drawparallels(np.r_[20:48:5], labels=[1,0,0,0], color='grey',fontsize=8,linewidth=0)
+
+    divider = make_axes_locatable(ax1)
+    cax = divider.append_axes('right', size='1%', pad=0.05)
+    cs = ax1.pcolormesh(self.v_x, self.v_y, self.colgrid1, shading='nearest',cmap='jet', vmin=self.vmin, vmax=self.vmax)
+    ax1.set_title(self.get_image_datename())
+    fig.colorbar(cs,cax=cax)
+    
 
 
   ###############################################################
@@ -264,20 +302,31 @@ class SplitImageLevels():
 
 
 
-  def process_set_images(self, image, image_color):
-    image, _, background = self.filter_image(image)
-    regions, _ = self.get_mser_regions(image)
-    
-    regx, regy, polys, lines, values = self.set_mser_regions(image, background, regions[:])
-    #self.divide_regions(image,regx, regy, polys, lines, values)
-    labels, centers = self.classify_neighbors(image, regx, regy,polys, values)
-    self.plot_mser_final_regions(image, regx, regy, values)
-    
-    #self.show_mser_red_regions(image, regions[:], labels)
-    #polys = self.classify_regions(image,poly[:])
-    #polys = self.classify_all_regions(image, poly[:])
-    #self.plot_mser_regions_3d(regx, regy, values, labels)
-    
+  def process_set_images(self, image_gray, image_bgr):
+    image, foreground, background = self.filter_image(image_gray)
+    image,image_rbg,image_masked = self.filter_image_for_mser(image,foreground)
+    regions_mser, boxes_mser = self.get_mser_regions(image_rbg)
+    #self.plot_regions_mser_blue(image,regions_mser)
+
+    kernel = np.ones((6,6), np.uint8)
+    regx, regy, regs, polys, lines, values = self.set_mser_regions(image_masked, regions_mser)
+    #self.plot_mser_final_regions(image_masked, regx, regy, values)
+    #self.plot_polygons_hulls(image_masked,polys)
+
+    image_projected, image_projected_mask = self.create_label_map(image, regions_mser)
+    #self.plot_projected_image(image_projected, regions_mser,boxes_mser)
+
+    labels_cc, num_cc = self.reconstruct_connected_component(image_projected_mask)
+    centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions = self.reconstruct_region_props(image_masked,labels_cc)
+    #self.plot_regions_reconstructed(image_projected,centroids,areas_partition,grays_values,"du")
+
+    X, weights = self.create_X(image_projected,centroids,grays_values,WEIGHT=5)
+    #self.plot_X(X)
+    #self.plot_weights(weights)
+
+    #self.plot_test_best_cluster_number(X,weights,40,7)
+    cluster_labels, cluster_centers = self.classify_regions(X,weights,7)
+    #self.plot_clustered_regions_3d(X,5,cluster_labels,cluster_centers)
 
 
 
@@ -289,27 +338,12 @@ class SplitImageLevels():
   ###             TRAITEMENT
   ###############################################################
 
-  def get_pollution_image_reference(self, image):
-
-    image_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+  def filter_image (self, image):
+    image = self.resize_image_percentage(image, 100)
+    image = self.pretraitement_image(image,6,3)
+    background, foreground = self.masking_interest_region(image)
     
-    # Search Pollution:
-    reds_colors = np.array([255,0,0], dtype=np.uint8)
-    #high_reds_colors = np.array([130, 255, 255], dtype=np.uint8)
-
-    # Search Mix:
-    low_blues_colors = np.array([100,65,75], dtype=np.uint8)
-    high_blues_colors = np.array([130, 255, 255], dtype=np.uint8)
-    
-    pollution_mask = cv2.inRange(image_hsv, reds_colors, reds_colors)
-
-    print("pollution mask", pollution_mask)
-    
-    # Momentos
-    #moments = cv2.moments(mascara_azul)
-    #area = int(moments['m00'])
-    #print("Pixeles activos "+str(area) +" pixeles")
-
+    return image, foreground, background
 
   def resize_image_percentage (self, image, scale_percent = 100):
     ### SCALE
@@ -319,9 +353,6 @@ class SplitImageLevels():
     image = cv2.resize(image, dim, interpolation = cv2.INTER_AREA)
 
     return image
-
-  def normalize_image(self, image):
-    return cv2.normalize(image, np.ones((image.shape[0], image.shape[0])) , 0, 255, cv2.NORM_MINMAX )
 
   def pretraitement_image(self, image, kernel_size = 9, iterations=3):
     ### MORPHO FILTERS
@@ -333,7 +364,7 @@ class SplitImageLevels():
   ## REMOVING THE HOLES
   def masking_interest_region(self, image):
     # Take the holes (pixels value = 0) and set it as 255
-    image = cv2.normalize(image, np.ones((image.shape[0], image.shape[0])) , self.vmin, self.vmax, cv2.NORM_MINMAX )
+    image = cv2.normalize(image, np.ones((image.shape[0], image.shape[0])), 0, self.vmax, cv2.NORM_MINMAX )
     image = np.where(image == 0, 255, image) 
     image = np.where(image != 255, 0, image) # This is the mask of the background
     image_holes_dilate = cv2.morphologyEx(image, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations = 3)
@@ -341,37 +372,71 @@ class SplitImageLevels():
 
     return image_holes_dilate, image_holes_dilate_inv
 
-  def find_edges (self, image):
-    ## Below code convert image gradient in both x and y direction
-    image = cv2.Laplacian(image, cv2.CV_64F, ksize=3) 
-    image = np.uint8(np.absolute(image))
-    #image_laplacian = cv2.bitwise_and(image_laplacian,image_laplacian,mask = image_holes_dilate_inv)
+  def filter_image_for_mser(self, image, foreground):
+    #kernel = np.ones((3,3),np.uint8)
+    #foreground = cv2.dilate(foreground,kernel,iterations = 3)
+    image = cv2.bitwise_and(image,image, mask=foreground)
 
-    return image
+    image_masked = ma.masked_values(image, 0.)
+    image_color = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    image_color = cv2.bitwise_and(image_color,image_color, mask=foreground)
+  
+    return image, image_color, image_masked
+  
+  ## REMOVING THE HOLES
+  
 
+  def get_mser_regions(self, image):
+    """
+    delta	          it compares (sizei−sizei−delta)/sizei−delta
+    min_area	      prune the area which smaller than minArea
+    max_area	      prune the area which bigger than maxArea
+    max_variation	  prune the area have similar size to its children
+    min_diversity	  for color image, trace back to cut off mser with diversity less than min_diversity
+    max_evolution	  for color image, the evolution steps
+    area_threshold	for color image, the area threshold to cause re-initialize
+    min_margin	    for color image, ignore too small margin
+    edge_blur_size	for color image, the aperture size for edge blur
+    """
 
-  def filter_image (self, image):
-    image = self.resize_image_percentage(image, 100)
-    image = self.pretraitement_image(image,6,3)
-    background, foreground = self.masking_interest_region(image)
-    
-    return image, foreground, background
+    mser = cv2.MSER_create( 1, # delta 
+                        300, # min_area
+                        34400, #max_area 
+                        4., # max_variation 
+                        .03, # min_diversity 
+                        10000, # max_evolution 
+                        1.04, # area_threshold 
+                        0.003, # min_margin
+                        5) # edge_blur_size
 
-  def get_mser_regions(self, image, vmin=300,vmax=50000):
-    mser = cv2.MSER_create(1, vmin, vmax, .25, 1., 1000, 1.001, 0.003, 5)
-    #(1, 100, 20000, .25, 1., 1000, 1.001, 0.003, 5)
-   
-    #fig, ax = plt.subplots(1,1)
-    #colorinfo = ax.imshow(image, cmap='gray')
-    #fig.colorbar(colorinfo)
-
+    # (1, 100, 20000, .25, 1., 1000, 1.001, 0.003, 5)
     regions, bboxes = mser.detectRegions(image)
     regions = sorted(regions, key=cv2.contourArea, reverse=True)
 
+    bboxes = sorted(bboxes, key=self.sort_boxes_by_area, reverse=True)
+
+    print("REGIONS found with MSER",len(regions))
+
     return regions, bboxes
 
+  def sort_boxes_by_area(self, box):
+    _, _, w, h = box
+    area = w * h
+    return area
 
+  def plot_regions_mser_blue(self, image, regions):
+    """
+    image : image in gray level
+    """
+    img_mser = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
 
+    for p in regions:
+      for k in p:
+        cv2.circle(img_mser, (k[0],k[1]), radius=0, color=(0, 0, 255), thickness=-1)
+    fig, ax = plt.subplots(1,1)
+    ax.imshow(img_mser)
+    ax.set_title("REGIONS MSER " + self.get_image_datename())
+    fig.show()
 
 
 
@@ -380,50 +445,15 @@ class SplitImageLevels():
   ###             PLOTTING
   ###############################################################
 
-  def show_mser_red_regions(self, image, regions, labels):
-    image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
-    #colors = np.array([(255,0,0),[(0,255,0),(0,0,255),(0,255,255),(255,255,0),(100,0,100),(24,180,0)])
-    colors = list([(255,0,0),(0,255,0),(0,0,255),(0,255,255),(255,255,0),(100,0,100),(24,180,0)])
-
-    #for i in labels:
-    #  print(colors[i])
-
-    #for l in labels:
-    for i, p in enumerate(regions[:]):
-      if i == (len(regions[:3]) - 1):
-        color = (255,0,0)
-      elif i == (len(regions[:3]) - 2):
-        color = (0,0,255)
-      else:
-        color = (0,255,0)
-
-      #print("color", color, "for", i)
-      for k in p:
-        cv2.circle(image, (k[0],k[1]), radius=0, color=color, thickness=-1)
-
-    fig, ax = plt.subplots(1,1)
-    ax.imshow(image)
-    #ax.invert_yaxis()
-
-
-
-
-
-
-
-
-
-
-
-
-  def set_mser_regions(self, image, background, regions):
+  def set_mser_regions(self, image, regions):
     regsX = list()
     regsY = list()
+    regs = list()
     regsPoly = list()
     regsLine = list()
     values_gray = list()
 
-    for j,r in enumerate(regions):
+    for r in regions:
       region = list()
       hull = cv2.convexHull(r)
 
@@ -438,256 +468,36 @@ class SplitImageLevels():
       if np.isnan(value_pixel):
         print(value_pixel)
         break
-      #xs = [pnt[0] if background[pnt[1],pnt[0]] != 255 else np.nan for pnt in r[:]]
-      #ys = [pnt[1] if background[pnt[1],pnt[0]] != 255 else np.nan for pnt in r[:]]
+
       xs = [pnt[0] for pnt in r]
       ys = [pnt[1] for pnt in r]
 
       regsX.append(xs)
       regsY.append(ys)
+      regs.append(r)
       regsPoly.append(poly)
       regsLine.append(line)
       values_gray.append(value_pixel)
 
-    return regsX, regsY, regsPoly, regsLine, values_gray
+    return regsX, regsY, regs, regsPoly, regsLine, values_gray
 
-  def export_current_region (self, image, regsX, regsY, filename="image-temp.png"):
-    x_range = [0, image.shape[1]]
-    y_range = [0, image.shape[0]]
-
-    fig, ax1 = plt.subplots(1, 1, figsize=(11,8))
-    ax1.scatter(regsX,regsY, cmap="gray")
-    ax1.set_xlim(*x_range)
-    ax1.set_ylim(*y_range)
-    ax1.invert_yaxis()
-    ax1.axis('off')
-    fig.savefig(filename, bbox_inches='tight', pad_inches=0)
-    plt.close(fig)
-
-  def slic_regions(self,image,mask,compactness=50,n_segments=150):
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    # compactness=compactness,
-    labels_1 = segmentation.slic(image,n_segments=n_segments)
-    out_1 = color.label2rgb(labels_1, image, kind='avg', bg_label=0)
-    out_1 = cv2.cvtColor(out_1, cv2.COLOR_RGB2GRAY)
-    out_1 = cv2.bitwise_and(out_1,out_1,mask=mask)
-
-    fig, ax = plt.subplots(1, 1)
-    ax.imshow(out_1, cmap="gray")
-    ax.set_title("SLIC")
-
-    return out_1
-    
-
-  def divide_regions(self, image, regx, regy, polys, lines, values):
+  def plot_polygons_hulls(self, image, polygons):
+    fig, ax = plt.subplots(1,1)
     xx_range = [0, image.shape[1]]
     yy_range = [0, image.shape[0]]
 
-    areas = list()
-    for p in polys:
-      areas.append(p.area)
+    for poly in polygons:
+      xxx,yyy = poly.exterior.xy
 
-    x_range = [100, 150, 10]
-    y_range = [20, 48, 5]
+      ax.plot(xxx,yyy)
+      ax.set_xlim(*xx_range)
+      ax.set_ylim(*yy_range)
+      ax.set_title("CONVEX HULLS MSER " + self.get_image_datename())
+      ax.invert_yaxis()
 
-    fig, ax = plt.subplots(1,1)
-    m=Basemap(llcrnrlon=100.,llcrnrlat=20.,urcrnrlon=150.,urcrnrlat=48.,resolution='i')
-    m.drawcoastlines()
-    m.drawmapboundary()
-    m.drawmeridians(np.r_[100:151:10], labels=[0,0,0,1], color='grey',fontsize=8,linewidth=0)
-    m.drawparallels(np.r_[20:48:5], labels=[1,0,0,0], color='grey',fontsize=8,linewidth=0)
+    fig.show()
 
-    fig0, ax0 = plt.subplots(1,1)
-    fig3, ax3 = plt.subplots(1,1)
-    m=Basemap(llcrnrlon=100.,llcrnrlat=20.,urcrnrlon=150.,urcrnrlat=48.,resolution='i')
-    m.drawcoastlines()
-    m.drawmapboundary()
-    m.drawmeridians(np.r_[100:151:10], labels=[0,0,0,1], color='grey',fontsize=8,linewidth=0)
-    m.drawparallels(np.r_[20:48:5], labels=[1,0,0,0], color='grey',fontsize=8,linewidth=0)
-    for i,line in enumerate(lines):
-      area = polys[i].area
-      mean_areas = np.mean(areas)
-      if area > mean_areas and area > 30000.:
-        mean_value = np.mean(values)
-        if values[i] > mean_value:
-          x, y = line.xy
-          filename = "image-temp-"+ str(i) +".png"
-          self.export_current_region(image, regx[i] ,regy[i], filename )
-          im, im_gray = self.load_image_from_files(filename)
-          im_gray = cv2.bitwise_not(im_gray)
-
-          # SLIC
-          img_slic = self.slic_regions(image,im_gray)
-
-          img_temp = img_slic.copy()
-          img_temp = cv2.cvtColor(img_temp, cv2.COLOR_GRAY2RGB)
-
-          # MSER
-          reg2, _ = self.get_mser_regions(img_temp,100,20000)
-          #mser = cv2.MSER_create(1, 100, 20000, .25, 1., 1000, 1.001, 0.003, 5)
-          #reg2, _ = mser.detectRegions(img_temp)
-          #reg2 = sorted(reg2, key=cv2.contourArea, reverse=True)
-
-          #for p in reg2[:]:
-          #  for k in p:
-          #    cv2.circle(img_temp, (k[0],k[1]), radius=0, color=(0, 0, 255), thickness=-1)
-          #ax3.imshow(img_temp)
-
-          # PLOT
-          rx, ry, ps, ls, vs = self.set_mser_regions(image, background, reg2)
-          
-          #self.plot_mser_final_regions(image, rx, ry, vs)
-          # OLD REGIONS
-          rgsX_2 = list()
-          rgsY_2 = list()
-
-          for reg in regx:
-            line = list()
-            for j in reg:
-              line.append((j / (image.shape[1] / 50)) + 100)
-            rgsX_2.append(line)
-
-          for reg in regy:
-            line = list()
-            for j in reg:
-              line.append(((image.shape[0] - j) / (image.shape[0] / 28)) + 20)
-            rgsY_2.append(line)
-          
-          if self.image_type == 'LT':
-            max_color_value = 35
-          else:
-            max_color_value = 45
-          
-          colors = sns.color_palette("YlOrBr", max_color_value + 1)
-          cmap_old = matplotlib.colors.ListedColormap(colors)
-          norm_old = matplotlib.colors.BoundaryNorm(np.arange(max_color_value + 1) - 0.5, cmap_old.N)
-
-          #for j,val in enumerate(values):
-          ax3.scatter(rgsX_2[i], rgsY_2[i], marker='.', color=cmap_old(norm_old(int(values[i]))) )
-          ax3.set_xlim(*x_range)
-          ax3.set_ylim(*y_range)
-          ax3.set_title('OLD Regions - IASI ' + self.image_type + " - " + str(self.day) +"/"+ str(self.month) +"/"+ str(self.year))
-
-          sm_old = matplotlib.cm.ScalarMappable(cmap=cmap_old, norm=norm_old)
-          cbar_ax_old = fig.add_axes([0.09, 0.06, 0.84, 0.02])
-          cb_old = fig3.colorbar(sm_old,cax=cbar_ax_old,orientation='horizontal')
-          if self.image_type == 'LT':
-            cb_old.set_ticklabels(np.arange(0,35,4))
-          else:
-            cb_old.set_ticklabels(np.arange(0,45,5))
-          cb_old.set_label('DU')
-
-          # NEW
-          ax0.plot(x, y, label="area:" + str(int(area)))
-          ax0.set_xlim(*xx_range)
-          ax0.set_ylim(*yy_range)
-          ax0.invert_yaxis()
-
-          rgsX2 = list()
-          rgsY2 = list()
-
-          for reg in rx:
-            line = list()
-            for i in reg:
-              line.append((i / (image.shape[1] / 50)) + 100)
-            rgsX2.append(line)
-
-          for reg in ry:
-            line = list()
-            for i in reg:
-              line.append(((image.shape[0] - i) / (image.shape[0] / 28)) + 20)
-            rgsY2.append(line)
-          
-          if self.image_type == 'LT':
-            max_color_value = 35
-          else:
-            max_color_value = 45
-          
-          colors = sns.color_palette("YlOrBr", max_color_value + 1)
-          cmap = matplotlib.colors.ListedColormap(colors)
-          norm = matplotlib.colors.BoundaryNorm(np.arange(max_color_value + 1) - 0.5, cmap.N)
-
-          for i,val in enumerate(vs):
-            ax.scatter(rgsX2[i], rgsY2[i], marker='.', color=cmap(norm(int(val))) )
-            ax.set_xlim(*x_range)
-            ax.set_ylim(*y_range)
-            ax.set_title('Max Regs - IASI ' + self.image_type + " - " + str(self.day) +"/"+ str(self.month) +"/"+ str(self.year))
-
-          sm = matplotlib.cm.ScalarMappable(cmap=cmap, norm=norm)
-          cbar_ax = fig.add_axes([0.09, 0.06, 0.84, 0.02])
-          cb = fig.colorbar(sm,cax=cbar_ax,orientation='horizontal')
-          if self.image_type == 'LT':
-            cb.set_ticklabels(np.arange(0,35,4))
-          else:
-            cb.set_ticklabels(np.arange(0,45,5))
-          cb.set_label('DU')
-
-    fig0.legend()
-    
-
-    
-
-  
-  
-
-  def classify_neighbors(self, image, regsX, regsY, polygons, values):
-    #ca = np.zeros([len(polygons),len(polygons), len(values)], np.uint16)
-    coordinatesList = list()
-
-    # Ploting weights
-    w_coords_x = list()
-    w_coords_y = list()
-    w_grays = list()
-
-    # Normalization for gray values (Pollution)
-    valuesNorm = (values - min(values)) / (max(values) - min(values))
-
-    for i,value in enumerate(valuesNorm):
-      # Normalization for X and Y
-      coord_x = polygons[i].centroid.x / image.shape[1]
-      coord_y = polygons[i].centroid.y / image.shape[0]
-      gray_value = value * self.weight_gray_values
-
-      ## To apply kmeans
-      coordinatesList.append(np.array([coord_x,coord_y, gray_value]))
-      
-    coordinatesArray = np.asarray(coordinatesList)
-
-    ## To plot weights
-    for coord in coordinatesArray:
-      w_coords_x.append(coord[0])
-      w_coords_y.append(coord[1])
-      w_grays.append(coord[2])
-
-    fig_, ax0 = plt.subplots(1,1)
-    number_regions = np.arange(len(coordinatesArray))
-
-    w_legends = ["X","Y","Gray"]
-    ax0.scatter(number_regions, w_coords_x, label=w_legends[0])
-    ax0.scatter(number_regions, w_coords_y, label=w_legends[1])
-    ax0.scatter(number_regions, w_grays, label=w_legends[2])
-    ax0.set_title("Weights comparison")
-    ax0.set_xlabel("Number of Regions")
-    ax0.set_ylabel("Weight")
-    hand, labl = ax0.get_legend_handles_labels()
-    plt.legend()
-
-    # TESTING KMEANS
-    wcss = list()
-    for i in range(1,50):
-      kmeanstest = KMeans(n_clusters=i, random_state=0).fit(coordinatesArray)
-      wcss.append(kmeanstest.inertia_)
-      
-    fig0, ax = plt.subplots(1,1)
-    ax.scatter(self.N_CLUSTERS,wcss[self.N_CLUSTERS], c='red', label="Selected cluster")
-    ax.plot( np.arange(len(wcss)) , wcss)
-    ax.set_title("Optimal number of clusters")
-    ax.set_xlabel("Number of clusters (k)")
-    ax.set_ylabel("Inertia")
-    fig0.legend()
-
-    clustering = KMeans(n_clusters=self.N_CLUSTERS, max_iter=300).fit(coordinatesArray)
-
+  def plot_mser_final_regions (self, image, regsX, regsY, values):
     x_range = [100, 150, 10]
     y_range = [20, 48, 5]
 
@@ -706,101 +516,45 @@ class SplitImageLevels():
         line.append(((image.shape[0] - i) / (image.shape[0] / 28)) + 20)
       rgsY2.append(line)
 
-    fig, ax1 = plt.subplots(1,1)
+    fig, ax = plt.subplots(1,1)
     m=Basemap(llcrnrlon=100.,llcrnrlat=20.,urcrnrlon=150.,urcrnrlat=48.,resolution='i')
     m.drawcoastlines()
     m.drawmapboundary()
     m.drawmeridians(np.r_[100:151:10], labels=[0,0,0,1], color='grey',fontsize=8,linewidth=0)
     m.drawparallels(np.r_[20:48:5], labels=[1,0,0,0], color='grey',fontsize=8,linewidth=0)
+
+    max_color_value = self.vmax
     
-    #print("labels", clustering.labels_)
-    #print("center", clustering.cluster_centers_)
-
-    # hls
-    # Greys
-    colors = sns.color_palette("hls", max(clustering.labels_) + 1)
-
+    colors = sns.color_palette("YlOrBr", self.vmax + 1)
     cmap = matplotlib.colors.ListedColormap(colors)
-    norm = matplotlib.colors.BoundaryNorm(np.arange(max(clustering.labels_) + 1) - 0.5, cmap.N)
- 
-    for i,label in enumerate(clustering.labels_):
-      ax1.scatter(rgsX2[i],rgsY2[i], marker='.', color=cmap(norm(label)) ) 
-      ax1.set_xlim(*x_range)
-      ax1.set_ylim(*y_range)
-      ax1.set_title('CLUSTERS - IASI ' + self.image_type + " - " + str(self.day) +"/"+ str(self.month) +"/"+ str(self.year) + " - # Clusters: " + str(self.N_CLUSTERS) )
+    norm = matplotlib.colors.BoundaryNorm(np.arange(self.vmin, self.vmax + 1) - 0.5, cmap.N)
+
+    for i,val in enumerate(values):
+      ax.scatter(rgsX2[i], rgsY2[i], marker='.', color=cmap(norm(int(val))) )
+      ax.set_xlim(*x_range)
+      ax.set_ylim(*y_range)
+      ax.set_title('REGIONS ' + str(len(values)) + self.get_image_datename())
 
     sm = matplotlib.cm.ScalarMappable(cmap=cmap, norm=norm)
     cbar_ax = fig.add_axes([0.09, 0.06, 0.84, 0.02])
     cb = fig.colorbar(sm,cax=cbar_ax,orientation='horizontal')
-    cb.set_ticklabels(np.arange(1,self.N_CLUSTERS))
-    cb.set_ticks(np.arange(self.N_CLUSTERS), update_ticks=True)
-    cb.set_label('Clusters')
+    if self.image_type == "UT":
+      cb.set_ticklabels(np.arange(self.vmin,self.vmax + 1,int(self.vmax / 10 )))
+    else:
+      cb.set_ticklabels(np.arange(self.vmin,self.vmax + 1, int(self.vmax / 9) )) # 9 is the number of values plotted in the colorbar i.e [10--13--16--...--35]
 
-    return clustering.labels_ , clustering.cluster_centers_
+    cb.set_label('DU')
 
-
-
-
-    
-  def classify_regions(self, image, polygons):
-    image = cv2.normalize(image, np.ones((image.shape[0], image.shape[0])) , self.vmin, self.vmax, cv2.NORM_MINMAX )
-
-    temp_polygons = polygons.copy()
-    first_poly = temp_polygons[0]
-
-    for i,poly in enumerate(temp_polygons[:]): 
-      if poly is None:
-        continue 
-
-      #for j,ut in enumerate(ut_polys[:]):
-      if first_poly.intersects(poly):
-        percentage = (first_poly.intersection(poly).area/first_poly.area) * 100
-
-        if percentage > 85:
-          value_poly_1 =  self.get_region_value(image, first_poly)
-          value_poly_n =  self.get_region_value(image, poly)
-          if np.abs(value_poly_1 - value_poly_n) < 5:
-            temp_polygons[i] = None
-
-    return temp_polygons
-
-
-
-  def classify_all_regions(self, image, polygons):
-    image = cv2.normalize(image, np.ones((image.shape[0], image.shape[0])) , self.vmin, self.vmax, cv2.NORM_MINMAX )
-    
-    temp_polygons = polygons.copy()
-    #first_poly = temp_polygons[0]
-
-    for i, poly in enumerate(temp_polygons[:]): 
-      if poly is None:
-        continue 
-      
-      if i == 0:
-        first_poly = temp_polygons[0]
-      #else:
-      #  first_poly = poly
-
-      if first_poly.intersects(poly):
-        percentage = (first_poly.intersection(poly).area / first_poly.area) * 100
-
-        if percentage > 85:
-          value_poly_1 =  self.get_region_value(image, first_poly)
-          value_poly_n =  self.get_region_value(image, poly)
-
-          if np.abs(value_poly_1 - value_poly_n) < 5:
-            temp_polygons[i] = None
-
-    return temp_polygons
-
-
-  def get_region_value(self, image, polygon):
+  def get_region_value(self, image, polygon, isABox=False):
     """
     This function returns the mean pixel value from a given polygon
     """
     image = cv2.normalize(image, np.ones((image.shape[0], image.shape[0])) , self.vmin, self.vmax, cv2.NORM_MINMAX )
 
-    minx, miny, maxx, maxy = polygon.bounds #Boite englobante
+    if isABox:
+      minx, miny, maxx, maxy = polygon
+    else:
+      minx, miny, maxx, maxy = polygon.bounds #Boite englobante
 
     pixel_steps_x = image.shape[1] * self.degree / self.colgrid.shape[1]
     pixel_steps_y = image.shape[0] * self.degree / self.colgrid.shape[0]
@@ -826,156 +580,373 @@ class SplitImageLevels():
     
     return value_pixel
 
-
-  def export_mser_regions (self,image,regsX,regsY,values, filename="regions-mser.png"):
-    x_range = [0, image.shape[1]]
-    y_range = [0, image.shape[0]]
-
-    fig, ax = plt.subplots(1,1, figsize=(11,8), facecolor=(0, 0, 0))
+  def create_label_map(self,image, regions):
+    # Creation of Carte de labels
     
+    projected = np.zeros(image.shape, np.uint16)
 
-    if self.image_type == 'LT':
-      max_color_value = 35
-    else:
-      max_color_value = 45
-    
-    colors = sns.color_palette("Greys_r", max_color_value + 1)
-    cmap = matplotlib.colors.ListedColormap(colors)
-    norm = matplotlib.colors.BoundaryNorm(np.arange(max_color_value + 1) - 0.5, cmap.N)
+    connected_components = list()
 
-    for i,val in enumerate(values):
-      ax.scatter(regsX[i], regsY[i], marker='.', color=cmap(norm(int(val))) )
-      ax.set_xlim(*x_range)
-      ax.set_ylim(*y_range)
-      ax.invert_yaxis()
-      ax.axis('off')
-
-    matplotlib.cm.ScalarMappable(cmap=cmap, norm=norm)
-    fig.savefig(filename, bbox_inches='tight', pad_inches=0,transparent=True)
-    plt.close(fig)
-
-    return filename
-
-
-
-  def plot_mser_final_regions (self, image, regsX, regsY, values):
-
-    x_range = [100, 150, 10]
-    y_range = [20, 48, 5]
-
-    rgsX2 = list()
-    rgsY2 = list()
-
-    for reg in regsX:
-      line = list()
-      for i in reg:
-        line.append((i / (image.shape[1] / 50)) + 100)
-      rgsX2.append(line)
-
-    for reg in regsY:
-      line = list()
-      for i in reg:
-        line.append(((image.shape[0] - i) / (image.shape[0] / 28)) + 20)
-      rgsY2.append(line)
-
-    fig, ax = plt.subplots(1,1)
-    m=Basemap(llcrnrlon=100.,llcrnrlat=20.,urcrnrlon=150.,urcrnrlat=48.,resolution='i')
-    m.drawcoastlines()
-    m.drawmapboundary()
-    m.drawmeridians(np.r_[100:151:10], labels=[0,0,0,1], color='grey',fontsize=8,linewidth=0)
-    m.drawparallels(np.r_[20:48:5], labels=[1,0,0,0], color='grey',fontsize=8,linewidth=0)
-
-    if self.image_type == 'LT':
-      max_color_value = 35
-    else:
-      max_color_value = 45
-    
-    colors = sns.color_palette("YlOrBr_r", max_color_value + 1)
-    cmap = matplotlib.colors.ListedColormap(colors)
-    norm = matplotlib.colors.BoundaryNorm(np.arange(max_color_value + 1) - 0.5, cmap.N)
-
-    for i,val in enumerate(values):
-      ax.scatter(rgsX2[i], rgsY2[i], marker='.', color=cmap(norm(int(val))) )
-      ax.set_xlim(*x_range)
-      ax.set_ylim(*y_range)
-      ax.set_title('REGIONS ' + str(len(values)) + ' - IASI ' + self.image_type + " - " + str(self.day) +"/"+ str(self.month) +"/"+ str(self.year))
-
-    sm = matplotlib.cm.ScalarMappable(cmap=cmap, norm=norm)
-    cbar_ax = fig.add_axes([0.09, 0.06, 0.84, 0.02])
-    cb = fig.colorbar(sm,cax=cbar_ax,orientation='horizontal')
-
-    if self.image_type == 'LT':
-      cb.set_ticklabels(np.arange(0,35,4))
-    else:
-      cb.set_ticklabels(np.arange(0,45,5))
-
-    cb.set_label('DU')
-
-
-  def plot_mser_regions_3d(self, regsX, regsY, values, labels):
-    
-    f3d = plt.figure(figsize=(14, 9))
-    ax2 = plt.axes(projection ='3d')
-
-    #colors = np.array(["yellow","blue","red","green","magenta","cyan","gray"])
-    #colors = {0:"yellow", 1:"blue", 2:"red", 3: "green", 4: "magenta", 5: "cyan", 6:"gray"}
-    #print("values", values)
-    #print("labels", clustering.labels_)
-    #print("center", clustering.cluster_centers_)
-    
-    for i,label in enumerate(labels):
-
-      if label == 0:
-        color = "red"
-      elif label == 1:
-        color = "yellow"
-      elif label == 2:
-        color = "green"
-      elif label == 3:
-        color = "magenta"
-      elif label == 4:
-        color = "cyan"
-      elif label == 5:
-        color = "gray"
-      elif label == 6:
-        color = "olive"
-      else:
-        color = "black"
-
-      ax2.scatter(regsX[i], regsY[i], values[i], marker='.', c=color) # c=colors[clustering.labels_]       #,label='Region ' + str(i))
-      ax2.set_title('IASI ' + self.image_type + " - " + str(self.day) +"/"+ str(self.month) +"/"+ str(self.year))
+    for i,r in enumerate(regions):
+      counter = (i + 1)
       
+      counter_has_summed = False
+      cc_has_summed = False
 
+      for k in r:
+        if projected[k[1]][k[0]] != 0:
+          ## search intersection
+          if counter_has_summed is False:
+            counter = counter + 1 #int(projected[k[1]][k[0]])
+            connected_components.append(counter)
+            counter_has_summed = True
 
+          cv2.circle(projected, (k[0],k[1]), radius=1, color=(counter), thickness=-1, lineType=cv2.FILLED)
+        else:
+          if cc_has_summed is False:
+            connected_components.append(counter)
+            cc_has_summed = True
+          
+          cv2.circle(projected, (k[0],k[1]), radius=1, color=(counter), thickness=-1, lineType=cv2.FILLED)
+        
+    kernel = np.ones((3,3), np.uint8)
+    projected = cv2.morphologyEx(projected, cv2.MORPH_CLOSE, kernel, iterations = 2)
 
-  def show_image(self, image):
-    fig, ax = plt.subplots(1,1, figsize=(11,8))
-    ax.imshow(image, cmap='gray')
+    projected_masked = ma.masked_values(projected, 0.)
 
-  def plot_original_image(self):
+    return projected, projected_masked
 
-    if self.image_type == 'LT':
-      vmax = 35
-      vmin = 3
-    else:
-      vmax = 45
-      vmin = 5
+  def plot_projected_image(self, image_projected, regions, boxes):
+    # font
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    # Blue color in BGR
+    color = (255, 0, 0)
+    # Line thickness of 2 px
+    thickness = 1
 
-    fig, ax1 = plt.subplots(1,1)
+    image_projected_color = cv2.cvtColor(image_projected, cv2.COLOR_GRAY2BGR)
+
+    for box in boxes:
+      x, y, w, h = box
+      cv2.rectangle(image_projected_color, (x, y), (x + w, y + h), (0, 0, 255), 2)
+
+    # Using cv2.putText() method
+    for i,r in enumerate(regions):
+      cv2.putText(image_projected_color, str(i+1), (r[0][0] + 10, r[0][1]), font, 1, color, thickness, cv2.LINE_AA)
+
+    fig, (ax1,ax2) = plt.subplots(1,2, figsize=(21,15))
+    ax1.imshow(image_projected, cmap="gray")
+    ax1.set_title("Label map gray scale")
+    ax2.imshow(image_projected_color)
+    ax2.set_title("Label map with container box")
+    plt.title("Label map " + self.get_image_datename())
+    fig.show()
+
+  def reconstruct_connected_component(self, image_projected):
+    labels, num = measure.label(image_projected, return_num=True, background=0.)
+    print("Total connected components", num)
+    return labels, num
+
+  def reconstruct_region_props(self, image_masked, labels_cc, min_width=10, min_height=10):
+    # return centroids
+    rescale=1.0
+    centroids = list()
+    areas_partition = list()
+    boxes_partition = list()
+    grays_values = list()
+    ids_valid_regions = list()
+
+    for i,region in enumerate(measure.regionprops(label_image=labels_cc)):
+      x_min = region.bbox[1]
+      x_max = region.bbox[3]
+      y_min = region.bbox[0]
+      y_max = region.bbox[2]
+      # TODO: CORREGIR EL PROBLEMA CON LAS CLUSTERS Y LAS REGIONES QUE SE PIERDEN
+      if (x_max - x_min) > min_width and y_max - y_min > min_height:
+        boxes_partition.append(np.array([x_min,y_min,x_max,y_max]))
+        cx, cy = map(lambda p: int(p*rescale), (region.centroid[0], region.centroid[1]))
+        centroids.append((cx, cy))
+        areas_partition.append(region.area)
+        grays_values.append(self.get_region_value(image_masked,np.array([x_min,y_min,x_max,y_max]),True)) # Gray values for the regions partitions
+        ids_valid_regions.append(i) # List to compare with CC. The idea is to rebuild the region as image, to do that we need the region id
+
+    print("Regions reconstructed",len(centroids))
+
+    return centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions
+
+  def plot_regions_reconstructed(self, image_projected, centroids, areas_partition, grays_values, text_to_plot="id"):
+    # font
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    # Line thickness of 2 px
+    thickness = 1
     
-    m=Basemap(llcrnrlon=100.,llcrnrlat=20.,urcrnrlon=150.,urcrnrlat=48.,resolution='i')
-    m.drawcoastlines()
-    m.drawmapboundary()
-    m.drawmeridians(np.r_[100:151:10], labels=[0,0,0,1], color='grey',fontsize=8,linewidth=0)
-    m.drawparallels(np.r_[20:48:5], labels=[1,0,0,0], color='grey',fontsize=8,linewidth=0)
+    image_projected = cv2.cvtColor(image_projected, cv2.COLOR_GRAY2BGR)
 
-    divider = make_axes_locatable(ax1)
-    cax = divider.append_axes('right', size='1%', pad=0.05)
-    cs = ax1.pcolormesh(self.v_x, self.v_y, self.colgrid1, shading='nearest',cmap='jet', vmin=vmin, vmax=vmax)
-    ax1.set_title('IASI ' + self.image_type + " - " + str(self.day) +"/"+ str(self.month) +"/"+ str(self.year))
-    fig.colorbar(cs,cax=cax)
+    for i in range(len(centroids)):
+        color = (random.randint(0,256), random.randint(0,256), random.randint(0,256))
+        text = None
+
+        if text_to_plot == "id":
+          text = str(i+1)
+        elif text_to_plot == "area":
+          text = str(int(areas_partition[i]))
+        elif text_to_plot == "du":
+          text = str(int(grays_values[i]))
+        else:
+          text = str(i+1)
+
+        # ID: str(i+1)
+        # Area: str(areas_partition[i])
+        # DU: str(int(imageLT.get_region_value(t_i,boxes_partition[i],True)))
+
+        cv2.putText(image_projected, text, (int(centroids[i][1]), int(centroids[i][0])), font, .5, color, thickness, cv2.LINE_AA)
+        cv2.circle(image_projected, (int(centroids[i][1]), int(centroids[i][0])), 3, color, -1)
+
+    fig, ax = plt.subplots(1,1, figsize=(15,10))
+    ax.imshow(image_projected)
+    ax.set_title(text_to_plot + self.get_image_datename())
+    fig.show()
+
+  ## CLUSTERING
+
+
+
+
+  def sigmoid(self,X):
+    return np.exp(X)
+    #return 1/(1+np.exp(X))
+
+  def softmax(self,X):
+    expo = np.exp(X)
+    expo_sum = np.sum(np.exp(X))
+    return expo/expo_sum
+
+
+  def create_X(self, image_projected, centroids, grays_values, WEIGHT=5):
+    x_norm = list() # array with centre de gravite x, y and gray value [(x,y,z)]
+    weights_list = list()
+    grays = grays_values.copy()
+
+    ## CREATE ARRAY BEFORE NORMALIZATION
+    for gray in grays:
+      tmp_w = WEIGHT
+      #if WEIGHT > 1:
+      #  tmp_w = WEIGHT * np.exp(gray)
+      weights_list.append(tmp_w * gray)
+
+    #g_v = np.asarray(grays_values)
+    #Example with mmatrix defined above
+    #weights_list = self.sigmoid(g_v)
+
+    gray_values_norm = (grays - min(grays)) / (max(grays) - min(grays))
+
+    for i,centroid in enumerate(centroids[:]):
+      x = centroid[0] / image_projected.shape[0]
+      y = centroid[1] / image_projected.shape[1]
+      z = gray_values_norm[i]
+      x_norm.append(np.array([x,y,z]))
+
+    X = np.asarray(x_norm)
+    # weights = np.asarray(weights_list) # weights_list.copy() 
     
+    return X, weights_list
 
+  def plot_X(self,X):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    for i in range(len(X)):
+      ax.scatter(X[i,0],X[i,1],X[i,2])
+
+    plt.title("X" + self.get_image_datename()) 
+    ax.set_xlabel('Centre de gravité X')
+    ax.set_ylabel('Centre de gravité Y')
+    ax.set_zlabel('DU - normalized [0-1]')
+    fig.show()
+
+  def plot_weights(self, weigths):
+    fig, ax = plt.subplots(1,1)
+    ax.plot(weigths)
+    ax.set_title("Weigths" + self.get_image_datename())
+    ax.set_xlabel("Number of Regions")
+    ax.set_ylabel("Weight")
+    fig.show()
+
+  def plot_test_best_cluster_number(self, X, weights, N_ITERATIONS= 40, N_CLUSTERS = 7):
+    # TESTING KMEANS
+    wcss = list()
+    # int((len(centers) / 5))
+    print("finding best cluster...")
+    for i in range(1,N_ITERATIONS):
+      #print("kmeans for cluster #",i)
+      kmeanstest = KMeans(n_clusters=i, random_state=0, max_iter=500).fit(X, sample_weight=np.asarray(weights))
+      wcss.append(kmeanstest.inertia_)
+
+    fig0, ax = plt.subplots(1,1)
+    ax.scatter(N_CLUSTERS,wcss[N_CLUSTERS], c='red', label="Selected cluster")
+    ax.plot( np.arange(len(wcss)) , wcss)
+    ax.set_title("Optimal number of clusters")
+    ax.set_xlabel("Number of clusters (k)")
+    ax.set_ylabel("Inertia")
+    fig0.legend()
+
+  def classify_regions(self,X,weights,N_CLUSTERS=7):
+    print("clustering...")
+
+    clustering = KMeans(n_clusters=N_CLUSTERS,random_state=0, init='k-means++')
+    cluster_labels = clustering.fit_predict(X, sample_weight=np.asarray(weights))
+    cluster_centers = clustering.cluster_centers_
+
+    print("Cluster finished.")
+
+    return cluster_labels, cluster_centers, clustering
+
+  def plot_clustered_regions_3d(self,X,WEIGHT,cluster_labels, cluster_centers):
+    # visualizing the clusters
+    fig = plt.figure(figsize=(11,8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    #X_gray_norm = X[:,2]
+    #X_gray = cv2.normalize(X_gray_norm, None, alpha=self.vmin, beta=self.vmax, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_64F)
+
+    for i in range(max(cluster_labels) + 1):
+      ax.scatter(X[cluster_labels==i,0],X[cluster_labels==i,1],X[cluster_labels==i,2], label="cluster " + str(i+1))
+
+    #c_center_norm = cluster_centers[:,2]
+    #c_center = cv2.normalize(c_center_norm, None, alpha=self.vmin, beta=self.vmax, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_64F)
+    ax.scatter(cluster_centers[:,0],cluster_centers[:,1],cluster_centers[:,2],s=200,c="black",label="centroid "+str(i))
+
+    ax.set_title("CLUSTERING W: " + str(WEIGHT) + imageLT.get_image_datename()) 
+    ax.set_xlabel('Centre de gravité X')
+    ax.set_ylabel('Centre de gravité Y')
+    ax.set_zlabel('Gray level normalized')
+    fig.legend()
+    ax.view_init(30, 30)
+    plt.draw()
+    plt.pause(.001)
+    fig.show()
+    plt.show()
+
+  def plot_clustered_regions_2d(self,X,WEIGHT,cluster_labels, cluster_centers):
+    fig, ax = plt.subplots(1,1)
+    for i in range(max(cluster_labels) + 1 ):
+      ax.scatter(X[cluster_labels==i,1],X[cluster_labels==i,0],label="cluster " + str(i+1))
+      ax.scatter( cluster_centers[i,1],cluster_centers[i,0] , s=10000 ,  facecolors='none', edgecolors='blue' ) 
+
+    ax.scatter(cluster_centers[:,1],cluster_centers[:,0],s=200,c="black",label="centroid")
+    ax.set_title("CLUSTERING W: " + str(WEIGHT) + self.get_image_datename()) 
+    ax.set_xlabel("Centre de gravité X")
+    ax.set_ylabel("Centre de gravité Y")
+    ax.invert_yaxis()
+    fig.legend()
+    fig.show()
+
+  def get_highest_cluster(self, cluster_centers):
+    # TO TAKE ONLY THE HIHGEST REGION (TEST)
+
+    cluster_highest_region = list()
+
+    for center in cluster_centers:
+      cluster_highest_region.append(center[2])
+
+    index_highest = np.argmax(cluster_highest_region)
+    highest_cluster = cluster_centers[index_highest]
+
+    return highest_cluster, index_highest
+
+
+  def get_image_cluster(self, labels_cc, cluster_labels):
+    image_cluster = np.zeros(labels_cc.shape, np.uint8)
+    cluster_labels1 = cluster_labels.copy()
+    cluster_labels1 += 1
+
+    for i,lbl in enumerate(cluster_labels[:]):
+      image_cluster = np.where(labels_cc == (i+1), lbl + 1, image_cluster)
+
+    fig,axx = plt.subplots(1,1)
+    axx.imshow(image_cluster)
+
+    return image_cluster
+
+  def plot_image_cluster(self, labels_cc, cluster_labels, index_highest):
+    fig, (ax1,ax2) = plt.subplots(1,2, figsize=(11,8))
+    tmp = np.zeros(labels_cc.shape, np.uint8)
+    tmp1 = tmp.copy()
+
+    cluster_labels1 = cluster_labels.copy()
+    cluster_labels1 += 1
+
+    for i,lbl in enumerate(cluster_labels[:]):
+      tmp = np.where(labels_cc == (i+1), lbl + 1, tmp)
+
+    tmp1 = np.where(tmp == (index_highest + 1),1,0)
+
+    ax1.imshow(tmp, "jet")
+    ax2.imshow(tmp1, "gray")
+    fig.show()
+
+
+  def plot_silhouette_coefficient(self, X, weights):
+    # visualizing Silhouette coefficient
+    for n_clusters in range(2,15):
+      # Create a subplot with 1 row and 2 columns
+      fig, (ax1, ax2) = plt.subplots(1, 2)
+      fig.set_size_inches(18, 7)
+      # The 1st subplot is the silhouette plot
+      # The silhouette coefficient can range from -1, 1 but in this example all
+      # lie within [-0.1, 1]
+      ax1.set_xlim([-0.1, 1])
+      # The (n_clusters+1)*10 is for inserting blank space between silhouette
+      # plots of individual clusters, to demarcate them clearly.
+      ax1.set_ylim([0, len(X) + (n_clusters + 1) * 10])
+      # Initialize the clusterer with n_clusters value and a random generator
+      # seed of 10 for reproducibility.
+      clusterer = KMeans(n_clusters=n_clusters, random_state=10)
+      cluster_labels = clusterer.fit_predict(X, sample_weight=weights)
+      # The silhouette_score gives the average value for all the samples.
+      # This gives a perspective into the density and separation of the formed
+      # clusters
+      silhouette_avg = metrics.silhouette_score(X, cluster_labels)
+      print("For n_clusters =", n_clusters, "The average silhouette_score is :", silhouette_avg)
+      # Compute the silhouette scores for each sample
+      sample_silhouette_values = metrics.silhouette_samples(X, cluster_labels)
+      y_lower = 10
+      
+      for i in range(n_clusters):
+        ith_cluster_silhouette_values = sample_silhouette_values[cluster_labels == i]
+        ith_cluster_silhouette_values.sort()
+        
+        size_cluster_i = ith_cluster_silhouette_values.shape[0]
+        y_upper = y_lower + size_cluster_i
+        #color = cm.nipy_spectral(float(i) / n_clusters) 
+        ax1.fill_betweenx(np.arange(y_lower, y_upper), 0, ith_cluster_silhouette_values,alpha=0.7)
+        
+        ax1.text(-0.05, y_lower + 0.5 * size_cluster_i, str(i))
+        
+        y_lower = y_upper + 10 # 10 for the 0 samples
+        ax1.set_title("The silhouette plot for the various clusters.")
+        ax1.set_xlabel("The silhouette coefficient values")
+        ax1.set_ylabel("Cluster label")
+        
+        ax1.axvline(x=silhouette_avg, color="red", linestyle="--")
+        ax1.set_yticks([]) # Clear the yaxis labels / ticks
+        ax1.set_xticks([-0.1, 0, 0.2, 0.4, 0.6, 0.8, 1])
+        
+        #colors = cm.nipy_spectral(cluster_labels.astype(float) / n_clusters)
+        ax2.scatter(X[:, 0], X[:, 1], marker=".", s=30, lw=0, alpha=0.7, edgecolor="k")
+        
+        centers = clusterer.cluster_centers_
+        ax2.scatter(centers[:, 0], centers[:, 1], marker="o",c="white", alpha=1, s=200, edgecolor="k")
+        
+        for i, c in enumerate(centers):
+          ax2.scatter(c[0], c[1], marker="$%d$" % i, alpha=1,s=50, edgecolor="k")
+          ax2.set_title("The visualization of the clustered data.")
+          ax2.set_xlabel("Feature space for the 1st feature")
+          ax2.set_ylabel("Feature space for the 2nd feature")
+          plt.suptitle(("Silhouette analysis for KMeans clustering on sample data with n_clusters = %d" % n_clusters), fontsize=14, fontweight="bold")
+      plt.show()
+
+  
   ###############################################################
   ###             REMOVE TEMP FILES
   ###############################################################
@@ -991,496 +962,162 @@ class SplitImageLevels():
 imageLT = SplitImageLevels()
 
 imageLT.set_year(2008)
-imageLT.set_month(5)
-imageLT.set_day(6)
+imageLT.set_month(12)
+imageLT.set_day(7)
 imageLT.set_image_type("LT")
+imageLT.set_vmin(10)
+imageLT.set_vmax(35)
 imageLT.set_image_name("levels")
 imageLT.set_weight_gray_values(1)
 imageLT.set_cluster_value(30)
 imageLT.set_pixel_size(0.25,.125)
-
 imageLT.get_image_by_leves()
-
+image_bgr , image_gray = imageLT.load_image_from_files(imageLT.get_image_name())
+image, foreground, background = imageLT.filter_image(image_gray)
+image,image_rbg,image_masked = imageLT.filter_image_for_mser(image,foreground)
+regions_mser, boxes_mser = imageLT.get_mser_regions(image_rbg)
 imageLT.plot_original_image()
+regx, regy, regs, polys, lines, values = imageLT.set_mser_regions(image_masked, regions_mser)
 
-# imageLT.get_image_name()
-bgr , gray = imageLT.load_image_from_files(imageLT.get_image_name())
-#imageLT.process_set_images(gray,bgr)
-#imageLT.remove_temporal_files()
-#imageLT.plot_original_image()
+imageLT.plot_mser_final_regions(image_masked, regx, regy, values)
 
-image, foreground, background = imageLT.filter_image(gray)
 
-kernel = np.ones((3,3),np.uint8)
-foreground = cv2.dilate(foreground,kernel,iterations = 3)
-image1 = cv2.bitwise_and(image,image, mask=foreground)
-image2 = cv2.bitwise_and(image,image, mask=background)
 
-myimage = cv2.cvtColor(image1, cv2.COLOR_GRAY2RGB)
-myimage = cv2.bitwise_and(myimage,myimage, mask=foreground)
-#t_i = cv2.normalize(image1, None, 0, 255, cv2.NORM_MINMAX )
-t_i = ma.masked_values(image1, 0.)
-#print(t_i[~t_i.mask])
-#mymask = t_i.mask
-#image3 = cv2.bitwise_and(image, image, mask=mymask)
+image_projected, image_projected_mask = imageLT.create_label_map(image, regions_mser)
+imageLT.plot_projected_image(image_projected,regions_mser,boxes_mser)
 
-print(t_i.max(), t_i.min())
+labels_cc, num_cc = imageLT.reconstruct_connected_component(image_projected_mask)
+print(num_cc)
 
-fig, (ax0, ax1) = plt.subplots(1,2, figsize=(11,8))
-ax0.imshow(myimage)
-ax1.imshow(foreground)
-#fig.title('Morpho Operations - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
+centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions = imageLT.reconstruct_region_props(image_masked,labels_cc)
+imageLT.plot_regions_reconstructed(image_projected, centroids, areas_partition, grays_values,'du')
 
-#ax1.imshow(background, cmap="gray")
-#ax2.imshow(image2)
-#ax3.imshow(foreground, cmap="gray")
+WEIGHT = 2
+N_CLUSTERS = 10
 
-fig3, ax3 = plt.subplots(1,1)
-#ax3.hist(t_i.ravel(), bins=256, range=(0.0, 1.0), fc='k', ec='k')
-ax3.hist(t_i[~t_i.mask],256,[0,256], fc='k', ec='k')
-#ax3.hist(image1.ravel(),254,[1,256], fc='k', ec='k')
-fig3.show()
+X, weights = imageLT.create_X(image_projected,centroids,grays_values,WEIGHT)
+cluster_labels, cluster_centers, model = imageLT.classify_regions(X,weights,N_CLUSTERS)
 
-"""
-delta	          it compares (sizei−sizei−delta)/sizei−delta
-min_area	      prune the area which smaller than minArea
-max_area	      prune the area which bigger than maxArea
-max_variation	  prune the area have similar size to its children
-min_diversity	  for color image, trace back to cut off mser with diversity less than min_diversity
-max_evolution	  for color image, the evolution steps
-area_threshold	for color image, the area threshold to cause re-initialize
-min_margin	    for color image, ignore too small margin
-edge_blur_size	for color image, the aperture size for edge blur
-"""
+plt.plot(grays_values)
+imageLT.plot_weights(weights)
 
-mser = cv2.MSER_create( 1, # delta 
-                       100, # min_area
-                       34400, #max_area 
-                       4., # max_variation 
-                       .01, # min_diversity 
-                       10000, # max_evolution 
-                       1.04, # area_threshold 
-                       0.003, # min_margin
-                       5) # edge_blur_size
+imageLT.plot_test_best_cluster_number(X,weights,40,N_CLUSTERS)
 
-# (1, 100, 20000, .25, 1., 1000, 1.001, 0.003, 5)
-regions, bboxes = mser.detectRegions(myimage)
-regions = sorted(regions, key=cv2.contourArea, reverse=True)
+#imageLT.plot_clustered_regions_3d(X,5,cluster_labels,cluster_centers)
+angle = np.linspace( 0 , 2 * np.pi , 5 ) 
+radius = 0.4
+x = radius * np.cos( angle ) 
+y = radius * np.sin( angle ) 
 
-#regions, bboxes = imageLT.get_mser_regions(image1, 100, 30000)
-#print(image1.shape)
-print(len(regions))
+print(x,y)
 
-img_mser = cv2.cvtColor(image1, cv2.COLOR_GRAY2RGB)
+imageLT.plot_clustered_regions_2d(X,WEIGHT,cluster_labels,cluster_centers)
+#plt.plot(np.arange(0,1,.1))
 
-for p in regions[:]:
-  for k in p:
-    cv2.circle(img_mser, (k[0],k[1]), radius=0, color=(0, 0, 255), thickness=-1)
-plt.imshow(img_mser)
+#plt.plot( x, y )
 
-kernel = np.ones((6,6), np.uint8)
-background  = cv2.morphologyEx(background, cv2.MORPH_DILATE, kernel)
-regx, regy, polys, lines, values = imageLT.set_mser_regions(t_i, background, regions[:])
-imageLT.plot_mser_final_regions(t_i, regx, regy, values)
+for i in range(len(cluster_centers) - 1):
+  distances = list()
+  for j in range(len(cluster_centers)):
+    xx = [cluster_centers[i][0], cluster_centers[j][0]]
+    m_x = (xx[1] + xx[0]) / 2
+    yy = [cluster_centers[i][1], cluster_centers[j][1]]
+    m_y = (yy[1] + yy[0]) / 2
 
+    d_1 = distance.euclidean(xx, yy)
+    distances.append(d_1)
+
+  #np.argmax(distances)
+  #print(distances)
 fig, ax = plt.subplots(1,1)
-xx_range = [0, image.shape[1]]
-yy_range = [0, image.shape[0]]
 
-for j,poly in enumerate(polys[:]):
+dists = euclidean_distances(cluster_centers)
+
+for i, dist in enumerate(dists):
+  max_dist = dist[np.argmax(dist)] * 20000
+  ax.scatter( cluster_centers[i,1],cluster_centers[i,0] , s=int(max_dist) ,  facecolors='none', edgecolors='blue' ) 
+
+#print(euclidean_distances(cluster_centers[0], cluster_centers[1:]))
+
+
+for i in range(max(cluster_labels) + 1 ):
+  ax.scatter(X[cluster_labels==i,1],X[cluster_labels==i,0],label="cluster " + str(i+1))
   
-  xxx,yyy = poly.exterior.xy
 
-  ax.plot(xxx,yyy)
-  ax.set_xlim(*xx_range)
-  ax.set_ylim(*yy_range)
-  ax.invert_yaxis()
+ax.scatter(cluster_centers[:,1],cluster_centers[:,0],s=200,c="black",label="centroid")
+ax.set_title("CLUSTERING W: " + str(WEIGHT) + imageLT.get_image_datename()) 
+ax.set_xlabel("Centre de gravité X")
+ax.set_ylabel("Centre de gravité Y")
+ax.invert_yaxis()
+fig.legend()
+fig.show()
 
+_, index_highest = imageLT.get_highest_cluster(cluster_centers)
+image_cluster = imageLT.get_image_cluster(labels_cc,cluster_labels)
 
+imageLT.plot_image_cluster(labels_cc,cluster_labels, index_highest)
 
-rx_test = regx.copy()
-ry_test = regy.copy()
-val_test = values.copy()
+imageLT.plot_silhouette_coefficient(X,weights)
 
-labels = sns.color_palette("Paired", len(values[:10]))
+# visualizing the clusters
+fig = plt.figure(figsize=(11,8))
+ax = fig.add_subplot(111, projection='3d')
 
-b_i = np.zeros([image.shape[1],image.shape[0],3], np.uint16)
+#X_gray_norm = X[:,2]
+#X_gray = cv2.normalize(X_gray_norm, None, alpha=self.vmin, beta=self.vmax, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_64F)
 
-#for i,x in enumerate(b_i[:1]):
-#  for j,y in enumerate(x):
-#    for k, label in enumerate(labels):
-#      b_i[i][j] = np.array()
+for i in range(max(cluster_labels) + 1):
+  ax.scatter(X[cluster_labels==i,0],X[cluster_labels==i,1],X[cluster_labels==i,2], label="cluster " + str(i+1))
 
+#c_center_norm = cluster_centers[:,2]
+#c_center = cv2.normalize(c_center_norm, None, alpha=self.vmin, beta=self.vmax, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_64F)
+ax.scatter(cluster_centers[:,0],cluster_centers[:,1],cluster_centers[:,2],s=200,c="black",label="centroid "+str(i))
 
+from scipy.spatial import distance
 
-filename = imageLT.export_mser_regions(image, regx, regy, values)
-image_flat = io.imread(filename)
-image_color = image_flat.copy()
-image_flat = cv2.cvtColor(image_flat, cv2.COLOR_RGBA2GRAY)
-image_flat = np.where(image_flat == 255, 0, image_flat) 
-#image_flat = np.where(image_flat == 255, 254, image_flat)
+for i in range(len(cluster_centers) - 1):
+  for j in range(len(cluster_centers)):
+    xx = [cluster_centers[i][0], cluster_centers[j][0]]
+    m_x = (xx[1] + xx[0]) / 2
+    yy = [cluster_centers[i][1], cluster_centers[j][1]]
+    m_y = (yy[1] + yy[0]) / 2
+    zz = [cluster_centers[i][2], cluster_centers[j][2]]
+    m_z = (zz[1] + zz[0]) / 2
 
-f1, ax1 = plt.subplots(1,1)
-xx_range = [0, image.shape[1]]
-yy_range = [0, image.shape[0]]
+    #d_1 = np.sqrt( ((xx[1] - xx[0]) ** 2) + ((yy[1] - yy[0]) ** 2) + ((zz[1] - zz[0]) ** 2) ) 
+    #print(d_1)
 
-#for p in polys:
-#  x,y = p.exterior.xy
+    #ax.scatter( cluster_centers[i,1],cluster_centers[i,0] , s=10000 ,  facecolors='none', edgecolors='blue' ) 
 
-#  ax1.plot(x,y)
-#  ax1.set_xlim(*xx_range)
-#  ax1.set_ylim(*yy_range)
-#  ax1.invert_yaxis()
+    #ax.scatter(m_x,m_y,m_z,color="black")
+    #ax.plot(xx, yy, zz, linestyle='--', marker='',color='gray')
 
-ax1.imshow(image_flat, cmap="gray")
-ax1.set_title('Projected gray level- IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
-f1.show()
-
-class Pointi(object):
-    def __init__(self,x,y):
-        self.x = x
-        self.y = y
- 
-    def getX(self):
-        return self.x
-    def getY(self):
-        return self.y
- 
-def getGrayDiff(img,currentPoint,tmpPoint):
-    return abs(int(img[currentPoint.x,currentPoint.y]) - int(img[tmpPoint.x,tmpPoint.y]))
- 
-def selectConnects(p):
-    if p != 0:
-        connects = [Pointi(-1, -1), Pointi(0, -1), Pointi(1, -1), Pointi(1, 0), Pointi(1, 1), \
-                    Pointi(0, 1), Pointi(-1, 1), Pointi(-1, 0)]
-    else:
-        connects = [ Pointi(0, -1),  Pointi(1, 0),Pointi(0, 1), Pointi(-1, 0)]
-    return connects
- 
-def regionGrow(img,seeds,thresh,p = 1):
-    height, weight = img.shape
-    seedMark = np.zeros(img.shape)
-    seedList = []
-    for seed in seeds:
-        seedList.append(seed)
-    label = 1
-    connects = selectConnects(p)
-    while(len(seedList)>0):
-        currentPoint = seedList.pop(0)
-        seedMark[currentPoint.x,currentPoint.y] = label
-        for i in range(8):
-            tmpX = currentPoint.x + connects[i].x
-            tmpY = currentPoint.y + connects[i].y
-            if tmpX < 0 or tmpY < 0 or tmpX >= height or tmpY >= weight:
-                continue
-            grayDiff = getGrayDiff(img,currentPoint,Pointi(tmpX,tmpY))
-            if grayDiff < thresh and seedMark[tmpX,tmpY] == 0:
-                seedMark[tmpX,tmpY] = label
-                seedList.append(Pointi(tmpX,tmpY))
-    return seedMark
-
-"""
-components = [1..8]
-for val in components:
-"""
-
-_labels = ndimage.label(image_flat)
-labels_comp = _labels[0]
-num_regions_comp = _labels[1]
-print("# regions",num_regions_comp)
-
-# get contours (presumably just one around the nonzero pixels) 
-contours = cv2.findContours(image_flat, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-contours = contours[0] if len(contours) == 2 else contours[1]
-
-print("# contours",len(contours))
-
-polys_comp = list()
-for contour in contours:
-  myContour = list()
-  for point in contour:
-    myContour.append(point[0].tolist())
-  polys_comp.append(Polygon(myContour))
-
-fig3,ax3 = plt.subplots(1,1)
-img_c = np.zeros(image_flat.shape, np.uint8)
-img_c = cv2.cvtColor(img_c, cv2.COLOR_GRAY2RGB)
-cv2.drawContours(img_c, contours, -1, (0,255,0), 3)
-
-def getPoints(poly,image):
-  """
-  To avoid getting a coordinate when the pixel value is 0
-  """
-  xmin, ymin, xmax, ymax = poly.bounds
-  _x, _y = 0., 0.
-
-  while True:
-    _x = random.uniform(xmin, xmax)
-    _y = random.uniform(ymin, ymax)
-
-    if poly.contains(Point(int(_x),int(_y))):
-      # if this condition is true, add to a dataframe here
-      if image[int(_y),int(_x)] == 0:
-        print("DO IT AGAIN",_x, _y)
-        getPoints(poly,image)
-        return 0.
-      break
-  return Pointi(int(_y),int(_x))
-
-centroids = list()
-for i,poly in enumerate(polys_comp):
-  if poly.area > 500.:
-    x,y = poly.centroid.x, poly.centroid.y
-    if image_flat[int(y),int(x)] == 0:
-      point_to_search = getPoints(poly,image_flat)
-    else:
-      point_to_search = Pointi(int(y),int(x))
-
-    centroids.append(point_to_search) 
-    ax3.imshow(img_c)
-    ax3.scatter([point_to_search.y],[point_to_search.x], c="white")
-
-#seeds = [Point3(140,10)]#,Point(82,150),Point(200,280)]
-binaryImg = regionGrow(image_flat,centroids,30)
-
-fig, (ax1,ax2) = plt.subplots(1,2,figsize=(11,8))
-ax1.imshow(binaryImg, cmap="gray")
-###ax1.scatter([x],[y])
-ax2.imshow(image_flat, cmap="gray")
-
-# Make bins
-bins = np.arange(image_flat.min() + 1, 254)
-# Compute histogram
-h, _ = np.histogram(image_flat, bins)
-bins = bins[:len(bins) - 1]
-
-peaks, _ = find_peaks(h) #,height=1000)
-
-# Main condition to create the threshold
-gray_levels_selected = bins[peaks]
-black_image = np.zeros(image_flat.shape, np.uint8)
-
-for i, value in enumerate(gray_levels_selected):
-  black_image[image_flat == value] = 1
-
-kernel = np.ones((3,3), np.uint8)
-#black_image  = cv2.morphologyEx(black_image, cv2.MORPH_OPEN, kernel)
-#black_image  = cv2.morphologyEx(black_image, cv2.MORPH_ERODE, kernel)
-
-labels, num = measure.label(black_image, return_num=True, connectivity=None, background=0.) 
-
-f2,ax2 = plt.subplots(1,1)
-ax2.plot(peaks,h[peaks], "x", label="Max relatives")
-ax2.hist(image_flat.ravel(),254,[1,254]);
-ax2.set_title('Histogram - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
-ax2.set_xlabel("Gray level [0-255]")
-ax2.set_ylabel("Number of pixels with the same color value")
-f2.legend()
-f2.show()
-
-fig0, (ax0,ax1) = plt.subplots(1,2, figsize=(11,8))
-ax0.imshow(black_image, cmap="gray")
-ax1.imshow(labels, cmap='nipy_spectral')
-ax1.set_title("Regions rebuilt number " + str(num))
-fig0.show()
-
-_labels = ndimage.label(black_image)
-
-lbl = _labels[0]
-num_regions = _labels[1]
-
-valuesNorm = (values - min(values)) / (max(values) - min(values))
-
-# Center of mass of each region
-centers = ndimage.measurements.center_of_mass(black_image, lbl, np.arange(1,num_regions))
-print(len(centers), len(valuesNorm), num_regions)
-
-fig0, (ax0,ax1) = plt.subplots(1,2, figsize=(11,8))
-ax0.imshow(black_image, cmap="gray")
-ax1.imshow(lbl, cmap='nipy_spectral')
-#ax1.scatter([myX], [myY], c="white")
-ax1.set_title("Regions rebuilt number " + str(num_regions))
-fig0.show()
-
-image_regs_kms = image_flat.copy()
-
-image_3 = image_flat.copy()
-image_3 = cv2.normalize(image_3, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-
-image_norm = list()
-for i,row in enumerate(image_3[:]):
-  for j,col in enumerate(row[:]):
-    _x = i / image_3.shape[1]
-    _y = j / image_3.shape[0]
-    _g = col
-    image_norm.append(np.array([_g]))
-
-image_norm_array = np.asarray(image_norm)
-image_norm_array = np.float32(image_norm_array)
-
-for i in image_norm_array[:10]:
-  print(i)
-
-pixel_values = image_regs_kms.reshape((-1, 1))
-pixel_values = np.float32(pixel_values)
-
-print(pixel_values.shape,image_norm_array.shape )
-
-#the below line of code defines the criteria for the algorithm to stop running, 
-#which will happen is 100 iterations are run or the epsilon (which is the required accuracy) 
-#becomes 85%
-criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.85)
-  
-# then perform k-means clustering wit h number of clusters defined as 3
-#also random centres are initally chosed for k-means clustering
-k = 30
-retval, labels1, centers2 = cv2.kmeans(pixel_values, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-
-retval11, labels11, centers11 = cv2.kmeans(image_norm_array, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-
-#wt_kmeansclus = kmeans.fit(X,sample_weight = Y)
-#predicted_kmeans = kmeans.predict(X, sample_weight = Y)
-
-# convert data into 8-bit values
-#centers2 = np.uint8(centers2)
-segmented_data = centers2[labels1.flatten()]
-segmented_data_1 = centers11[labels11.flatten()]
-
-
-print(segmented_data.shape, segmented_data_1.shape)
-
-# reshape data into the original image dimensions
-segmented_image = segmented_data.reshape((image_regs_kms.shape))
-segmented_image = segmented_image.astype(np.uint8)
-
-#image_color = cv2.cvtColor(image_flat , cv2.COLOR_GRAY2RGB)
-#segmented_image_2 = segmented_data_1.reshape(image_color.shape)
-
-plt.imshow(segmented_image, cmap="jet")
-plt.title('CLUSTERS - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
+ax.set_title("CLUSTERING W: " + str(WEIGHT) + imageLT.get_image_datename()) 
+ax.set_xlabel('Centre de gravité X')
+ax.set_ylabel('Centre de gravité Y')
+ax.set_zlabel('Gray level normalized')
+fig.legend()
+ax.view_init(30, 30)
+plt.draw()
+plt.pause(.001)
+fig.show()
 plt.show()
 
-s_i = segmented_image.copy()
-s_i = ma.masked_values(s_i, 0.)
+#from yellowbrick.cluster import InterclusterDistance
 
-grays_level_predicted = list() # list of all gray levels needed as cluster
+# Generate synthetic dataset with 12 random clusters
+#X, y = make_blobs(n_samples=1000, n_features=12, centers=12, random_state=42)
 
-for i,val in enumerate(s_i):
-  row = list(set(val.tolist())) # to get onique values from list
-  for v in row:
-    if v is not None and v not in grays_level_predicted:
-      grays_level_predicted.append(v)
-
-grays_level_predicted.sort()
-print(grays_level_predicted)
-
-#for cluster in grays_level_predicted[:len(grays_level_predicted) - 3]:
-#  s_i[s_i == cluster] = 0
-#s_i = ma.masked_values(s_i, 0.)
-
-plt.imshow(s_i)
-
-c_i = s_i.copy()
-g_l = grays_level_predicted.copy()
-
-all_contours_regions = list()
-all_content_regions = list()
-
-for k in range(len(g_l)):
-  tmp = c_i.copy()
-  black = np.zeros(c_i.shape, np.uint8)
-  for i in range(len(g_l)):
-    if i is k:
-      #black = np.where(tmp == g_l[i], 255, black) 
-      #print(black.shape)
-      black = np.where(tmp == g_l[i], 255, black) 
-      #black[tmp == g_l[i]] = 1
-    if i is not k:
-      tmp[tmp == g_l[i]] = 0
-  all_content_regions.append(black)
-  tmp = ma.masked_values(tmp, 0.)
-  contours, _ = cv2.findContours(tmp, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-  all_contours_regions.append(contours)
-  
-fig3,ax3 = plt.subplots(1,1)
-img_c = np.zeros(c_i.shape, np.uint8)
-img_c = cv2.cvtColor(img_c, cv2.COLOR_GRAY2RGB)
-
-print(len(all_contours_regions),len(all_content_regions))
-
-for i, cont in enumerate(all_contours_regions):
-  cv2.drawContours(img_c, cont, -1, (0,0,255), 3)
-  ax3.imshow(img_c)
-
-f,x = plt.subplots(1,1)
-for a in all_content_regions[:]:
-  a = ma.masked_values(a, 0.)
-  x.imshow(a)
-
-all_polys_regions = list()
-all_points_regions = list()
-for i,contours in enumerate(all_contours_regions[:]):
-  polys_regions = list()
-  points_regions = list()
-  for contour in contours:
-    if len(contour) > 2:
-      myContour = list()
-      for point in contour:
-        myContour.append(point[0].tolist())
-      polys_regions.append(Polygon(myContour))
-      points_regions.append(MultiPoint(myContour))
-
-  all_polys_regions.append(polys_regions)
-  all_points_regions.append(points_regions)
-
-print(len(all_polys_regions))
-
-fig, ax = plt.subplots(1,1)
-
-xx_range = [0, c_i.shape[1]]
-yy_range = [0, c_i.shape[0]]
-
-for polys in all_polys_regions:
-  for poly in polys:
-    x,y = poly.exterior.xy
-
-    ax.plot(x,y)
-    ax.set_xlim(*xx_range)
-    ax.set_ylim(*yy_range)
-    ax.invert_yaxis()
-
-def print_confussion_matrix_results(cnf_matrix):
-  FP = cnf_matrix.sum(axis=0) - np.diag(cnf_matrix)  
-  FN = cnf_matrix.sum(axis=1) - np.diag(cnf_matrix)
-  TP = np.diag(cnf_matrix)
-  TN = cnf_matrix.sum() - (FP + FN + TP)
-
-  FP = FP.astype(float)
-  FN = FN.astype(float)
-  TP = TP.astype(float)
-  TN = TN.astype(float)
-
-  # Sensitivity, hit rate, recall, or true positive rate
-  TPR = TP/(TP+FN)
-  # Specificity or true negative rate
-  TNR = TN/(TN+FP) 
-  # Precision or positive predictive value
-  PPV = TP/(TP+FP)
-  # Negative predictive value
-  NPV = TN/(TN+FN)
-  # Fall out or false positive rate
-  FPR = FP/(FP+TN)
-  # False negative rate
-  FNR = FN/(TP+FN)
-  # False discovery rate
-  FDR = FP/(TP+FP)
-  # Overall accuracy
-  ACC = (TP+TN)/(TP+FP+FN+TN)
-
-  print("TPR:",TPR,"PPV:",PPV,"NPV:",NPV,"FPR",FPR,"FNR",FNR,"FDR",FDR,"ACC",ACC)
+# Instantiate the clustering model and visualizer
+#model = KMeans(6)
+#visualizer = InterclusterDistance(model)
+#visualizer.fit(X)        # Fit the data to the visualizer
+#visualizer.show()        # Finalize and render the figure
 
 directories = os.listdir( imageLT.get_DIR_TRAIN() )
  
+cluster_labels1 = cluster_labels + 1
+
 # This would print all the files and directories
 for file in directories:
   only_png_files = re.search(".jpg", file)
@@ -1496,111 +1133,259 @@ for file in directories:
         #img_gray = ma.masked_values(img_gray, 255.)
         img_gray = cv2.GaussianBlur(img_gray,(5,5),cv2.BORDER_DEFAULT)
 
-        best_regions = list()
-        worst_regions = list()
+        best_regions_c = list()
+        worst_regions_c = list()
 
-        for region_ in all_content_regions:
-          im_orig = region_.copy()
+        all_true_positives_c = list()
+        all_true_negatives_c = list()
+        all_false_positives_c = list()
+        all_false_negatives_c = list()
+        all_accuracy_c = list()
+        f_p = list()
+        f_n = list()
+
+        for i in range(1,max(cluster_labels1) + 1):
           im_bin = img_gray.copy()
+          
+          im_orig = np.zeros(image_projected.shape, np.uint8)
+          im_orig = np.where(image_cluster == i,1, im_orig)
 
-          im_orig = cv2.normalize(im_orig, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
           im_bin = cv2.normalize(im_bin, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-          
-          #X_test = im_orig.reshape((-1, 1)).tolist()
-          #X_test = np.float32(X_test)
+          im_orig = cv2.normalize(im_orig, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 
-          #y_test = im_bin.reshape((-1, 1)).tolist()
-          #y_test = np.float32(y_test)
+          ## CONTOURS IM_BIN
+          contours_bin, _ = cv2.findContours(im_bin, 1, 2)
+          cnt_bin = contours_bin[0]
+          M_bin = cv2.moments(cnt_bin)
+          # Calculate centroid
+          cx_bin = int(M_bin['m10']/M_bin['m00'])
+          cy_bin = int(M_bin['m01']/M_bin['m00'])
 
-          #conf_matrix = metrics.confusion_matrix(y_test, X_test)
-          #print(metrics.classification_report(y_test, X_test))
-          #print_confussion_matrix_results(conf_matrix)
+          ## CONTOURS IM_ORIG
+          tmp = np.zeros(im_orig.shape, np.uint8)
+          #tmp = cv2.cvtColor(tmp, cv2.COLOR)
+          contours_orig, _ = cv2.findContours(im_orig, 1, 2)
+
+          cx_orig_centers = list() # list of all centers of mini contous
+          cy_orig_centers = list()
+
+          for cnt in contours_orig:
+            x,y,w,h = cv2.boundingRect(cnt)
+            cx = ( x + (x + w) ) / 2
+            cy = ( y + (y + h) ) / 2 
+            
+            cx_orig_centers.append(cx)
+            cy_orig_centers.append(cy)
           
-          # compute the error image between im_bin and im_orig (the ideal solution) using np.abs and np.sum 
-          # PORCENTAJE DE PIXELES DENTRO Y FUERA DE LA FIGURA VERITE TERRAIN
-          true_positives = 0
-          false_positives = 0
-          false_negatives = 0
-          true_negatives = 0
+          cx_orig_mean = np.mean(cx_orig_centers)
+          cy_orig_mean = np.mean(cy_orig_centers)
+
+          #cx_mean_orig = np.mean(c_orig_centers[:,0])
+          #cy_mean_orig = np.mean(c_orig_centers)
+          #print(cx_mean_orig,cy_mean_orig)
           
-          for i,x in enumerate(im_bin[:]):
-            for j,y in enumerate(x[:]):
-              if y == 1:
-                if im_orig[i][j] == 1:
-                  # True positive
-                  true_positives += 1
-                else:
-                  false_negatives += 1
-              else:
-                if im_orig[i][j] == 1:
-                  # False positives
-                  false_positives += 1
-                else:
-                  true_negatives += 1
+          
+          #cnt_orig = contours_orig[0]
+          #M_orig = cv2.moments(cnt_orig)
+          #print("area: ",M_orig['m00'])
+
+          ## Calculate centroid
+          #cx_orig = int(M_orig['m10']/M_orig['m00'])
+          #cy_orig = int(M_orig['m01']/M_orig['m00'])
+          
+          c_m_temp = confusion_matrix(im_bin.flatten(), im_orig.flatten())
+          true_positives = c_m_temp[1][1]
+          false_positives = c_m_temp[0][1]
+          false_negatives = c_m_temp[1][0]
+          true_negatives = c_m_temp[0][0]
+
+          f_p.append(false_positives)
+          f_n.append(false_negatives)
+
+          accuracy = accuracy_score(im_bin.flatten(),im_orig.flatten()) * 100
               
-
-          print("pixels: true_positives", true_positives)
-          print("pixels: false_positives",false_positives)
-          print("pixels: false_negatives",false_negatives)
-          print("pixels: true_negatives",true_negatives)
           print("\n")
           total_pixels_blancs_ref = len(im_bin[im_bin == 1])
           total_pixels_blancs_test = len(im_orig[im_orig == 1])
-          print("total_pixels_blancs_ref", total_pixels_blancs_ref)
-          print("total_pixels_blancs_test", total_pixels_blancs_test)
-          print("\n")
-          print("perc: true_positives", int(true_positives * 100 / total_pixels_blancs_test), "%")
-          print("perc: false_positives", int(false_positives * 100 / total_pixels_blancs_test), "%")
-          print("perc: false_negatives", int(false_negatives * 100 / total_pixels_blancs_ref), "%")
 
-          if int(true_positives * 100 / total_pixels_blancs_test) >= 30:
-            best_regions.append(im_orig)
-          else:
-            worst_regions.append(im_orig)
+          #im_test_ones = np.ones(im_bin.shape, np.uint8)
+          #im_test_ones = np.where(im_bin == 1,0,im_test_ones)
+          #im_test_ones = np.where(im_orig == 1,0,im_test_ones)
+          #total_pixels_noirs = len(im_test_ones[im_test_ones == 1])
 
-          error = np.sum(np.abs(im_orig - im_bin))
+          #print("pixels: true_positives", true_positives)
+          #print("pixels: false_positives",false_positives)
+          #print("pixels: false_negatives",false_negatives)
+          #print("pixels: true_negatives",true_negatives)
+          #print("total_pixels_blancs_ref", total_pixels_blancs_ref)
+          #print("total_pixels_blancs_test", total_pixels_blancs_test)
+          
+          #print("perc: true_positives", int(true_positives * 100 / total_pixels_blancs_test), "%")
+          #print("perc: false_positives", int(false_positives * 100 / total_pixels_blancs_test), "%")
+          #print("perc: false_negatives", int(false_negatives * 100 / total_pixels_blancs_ref), "%")
+          ##print("perc: true_negatives", int(true_negatives * 100 / total_pixels_noirs), "%")
 
-          # visualize the differences between the original image and the solution
+          all_true_positives_c.append(true_positives * 100 / total_pixels_blancs_test)
+          all_false_positives_c.append(false_positives * 100 / total_pixels_blancs_test)
+          all_false_negatives_c.append(false_negatives * 100 / total_pixels_blancs_ref)
+          #all_true_negatives.append(true_negatives * 100 / total_pixels_noirs)
+          all_accuracy_c.append(accuracy)
+
+          #if int(true_positives * 100 / total_pixels_blancs_test) >= 30:
+          #  best_regions_c.append(im_orig)
+          #else:
+          #  worst_regions_c.append(im_orig)
+
+          ##error = np.sum(np.abs(im_orig - im_bin))
+
+          #cnt = contours[4]
+          #img_c = cv2.cvtColor(t_i, cv2.COLOR_GRAY2RGB)
+          #cv2.drawContours(img_c, [cnt], 0, (0,255,0), 3)
+          #bi = np.zeros(im_bin.shape, np.uint8)
+          #bii = cv2.cvtColor(bi, cv2.COLOR_GRAY2RGB)
+
+          mid_point_x = (cx_orig_mean + cx_bin) / 2
+          mid_point_y = (cy_orig_mean + cy_bin) / 2
+
+
+          ## visualize the differences between the original image and the solution
           plt.figure()
-          plt.title('Ground Truth and Regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
+          plt.title("Ground Truth and Regions" + imageLT.get_image_datename())
+          #plt.scatter([cx_bin],[cy_bin], c="green")
+          #cv2.drawContours(bii, contours_bin, -1, (0,255,0), 3)
+          #plt.scatter([cx_orig_mean],[cy_orig_mean], c="blue")
+          #plt.plot([cx_orig_mean,cx_bin], [cy_orig_mean,cy_bin], "--",c="white")
+          #plt.scatter([mid_point_x],[mid_point_y], c="yellow")
+
+          #cv2.drawContours(bii, [hull],0,(0,255,0),2)
+          #cv2.drawContours(bii, contours_orig, -1, (255,0,0), 3)
+          #plt.imshow(bii)
           plt.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
           plt.show()
 
-fig, (axx, axx2) = plt.subplots(1,2)
+sensitivity_c = list()
+for i,tp in enumerate(all_true_positives_c):
+  sensitivity_c.append(tp / (tp + all_false_negatives_c[i]) * 100) 
 
-black_image_best = np.zeros(best_regions[0].shape, np.uint8)
-black_image_worst = np.zeros(worst_regions[0].shape, np.uint8)
+fig, ax = plt.subplots(1,1)
+ax.plot( np.arange(len(all_true_positives_c)), all_true_positives_c, label="True Positives")
+ax.plot( np.arange(len(all_false_positives_c)), all_false_positives_c, label="False Positives")
+ax.plot( np.arange(len(all_false_negatives_c)), all_false_negatives_c, label="False Negatives")
+ax.plot( np.arange(len(all_accuracy_c)), all_accuracy_c, "--", label="Accuracy")
+ax.plot( np.arange(len(sensitivity_c)), sensitivity_c, "--", label="Sensitivity")
 
-for reg in best_regions[:]:
-  tmp = ma.masked_values(reg, 0.)
-  for i,x in enumerate(tmp[:]):
-    for j,y in enumerate(x):
-      if isinstance(y, np.uint8):
-        black_image_best[i][j] = 1
+ax.set_title('Confusion Matrix variation - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
+ax.set_xlabel("Cluster index")
+ax.set_ylabel("Confusion Matrix values %")
+ax.legend()
 
-for reg in worst_regions[:]:
-  tmp = ma.masked_values(reg, 0.)
-  for i,x in enumerate(tmp[:]):
-    for j,y in enumerate(x):
-      if isinstance(y, np.uint8):
-        black_image_worst[i][j] = 1
+xx_r = [0, 110]
+yy_r = [0, 110]
+fig, ax = plt.subplots(1,1)
 
+plt_f_p = np.unique(all_false_positives_c) # como hay valores repetidos, solo ploteare la linea de los que no son repetidos
+plt_f_n = np.unique(all_false_negatives_c)
 
-axx.imshow(black_image_best, cmap="gray")
-axx.set_title('Best regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
-axx2.imshow(black_image_worst, cmap="gray")
-axx2.set_title('Worst regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
-
-final_image = cv2.bitwise_and(gray, gray, mask=black_image)
-plt.imshow(final_image, cmap="nipy_spectral")
-
-
-
-
-
+#ax.plot(plt_f_p, plt_f_n)
+ax.scatter([all_false_positives_c], [all_false_negatives_c])
+ax.set_xlabel("% False Negatives")
+ax.set_ylabel("% False Positives")
+ax.set_xlim(*xx_r)
+ax.set_ylim(*yy_r)
+#ax.plot( all_false_positives_c, all_false_negatives_c, label="False Negatives")
+#ax.legend()
+fig.show()
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+def setIterationForDay(day=1,typei="LT"):
+  imageLT = SplitImageLevels()
+  month=5
+
+  imageLT.set_year(2008)
+  imageLT.set_month(month)
+  imageLT.set_day(day)
+  imageLT.set_image_type(typei)
+  imageLT.set_image_name("levels")
+  imageLT.set_weight_gray_values(1)
+  imageLT.set_cluster_value(30)
+  imageLT.set_pixel_size(0.25,.125)
+  imageLT.get_image_by_leves()
+  bgr , gray = imageLT.load_image_from_files(imageLT.get_image_name())
+  image, foreground, background = imageLT.filter_image(gray)
+  kernel = np.ones((3,3),np.uint8)
+  foreground = cv2.dilate(foreground,kernel,iterations = 3)
+  image1 = cv2.bitwise_and(image,image, mask=foreground)
+  image2 = cv2.bitwise_and(image,image, mask=background)
+  myimage = cv2.cvtColor(image1, cv2.COLOR_GRAY2RGB)
+  myimage = cv2.bitwise_and(myimage,myimage, mask=foreground)
+  t_i = ma.masked_values(image1, 0.)
+  mser = cv2.MSER_create( 1, # delta 
+                        100, # min_area
+                        34400, #max_area 
+                        4., # max_variation 
+                        .01, # min_diversity 
+                        10000, # max_evolution 
+                        1.04, # area_threshold 
+                        0.003, # min_margin
+                        5) # edge_blur_size
+
+  # (1, 100, 20000, .25, 1., 1000, 1.001, 0.003, 5)
+  regions, bboxes = mser.detectRegions(myimage)
+  regions = sorted(regions, key=cv2.contourArea, reverse=True)
+  regx, regy, polys, lines, values = imageLT.set_mser_regions(t_i, background, regions[:])
+  
+  export_original_d(day,typei)
+  export_regions(day,typei)
+
+def export_original_d(day=1,typei="LT"):
+  month=5
+  fig2, (ax2) = plt.subplots(1, 1, figsize = (11,8))
+  ax2.pcolormesh(imageLT.v_x, imageLT.v_y, imageLT.colgrid1, shading='nearest',cmap='jet', vmin=imageLT.vmin, vmax=imageLT.vmax)
+  ax2.axis('off')
+  image_name = typei + '-color-' + str(2008) + '%02d'%month+'%02d'%day+'.png'
+  fig2.savefig(DIR_TEST + "06-06/"+ image_name, bbox_inches='tight', pad_inches=0)
+  plt.close(fig2)
+
+def export_regions(day=1,typei="LT"):
+  month=5
+  x_range = [0, image.shape[1]]
+  y_range = [0, image.shape[0]]
+
+  fig, ax = plt.subplots(1,1, figsize=(11,8), facecolor=(0, 0, 0))
+
+  if imageLT.image_type == 'LT':
+    max_color_value = 35
+  else:
+    max_color_value = 45
+
+  colors = sns.color_palette("YlOrBr_r", max_color_value + 1)
+  cmap = matplotlib.colors.ListedColormap(colors)
+  norm = matplotlib.colors.BoundaryNorm(np.arange(max_color_value + 1) - 0.5, cmap.N)
+
+  for i,val in enumerate(values):
+    ax.scatter(regx[i], regy[i], marker='.', color=cmap(norm(int(val))) )
+    ax.set_xlim(*x_range)
+    ax.set_ylim(*y_range)
+    ax.invert_yaxis()
+    ax.axis('off')
+
+  matplotlib.cm.ScalarMappable(cmap=cmap, norm=norm)
+  image_name = typei + '-reg-' + str(2008) + '%02d'%month+'%02d'%day+'.png'
+  fig.savefig(DIR_TEST + "06-06/" + image_name, bbox_inches='tight', pad_inches=0,transparent=True)
+  plt.close(fig)
 
 
 
