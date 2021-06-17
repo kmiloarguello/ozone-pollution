@@ -359,9 +359,10 @@ class SplitImageLevels():
 
     return image
 
+  ## REMOVING THE HOLES
   def masking_interest_region(self, image):
     # Take the holes (pixels value = 0) and set it as 255
-    image = cv2.normalize(image, np.ones((image.shape[0], image.shape[0])) , self.vmin, self.vmax, cv2.NORM_MINMAX )
+    image = cv2.normalize(image, np.ones((image.shape[0], image.shape[0])), 0, self.vmax, cv2.NORM_MINMAX )
     image = np.where(image == 0, 255, image) 
     image = np.where(image != 255, 0, image) # This is the mask of the background
     image_holes_dilate = cv2.morphologyEx(image, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations = 3)
@@ -370,8 +371,8 @@ class SplitImageLevels():
     return image_holes_dilate, image_holes_dilate_inv
 
   def filter_image_for_mser(self, image, foreground):
-    kernel = np.ones((3,3),np.uint8)
-    foreground = cv2.dilate(foreground,kernel,iterations = 3)
+    #kernel = np.ones((3,3),np.uint8)
+    #foreground = cv2.dilate(foreground,kernel,iterations = 3)
     image = cv2.bitwise_and(image,image, mask=foreground)
 
     image_masked = ma.masked_values(image, 0.)
@@ -397,14 +398,14 @@ class SplitImageLevels():
     """
 
     mser = cv2.MSER_create( 1, # delta 
-                          500, # min_area
-                          34400, #max_area 
-                          4., # max_variation 
-                          .3, # min_diversity 
-                          10000, # max_evolution 
-                          1.04, # area_threshold 
-                          0.004, # min_margin
-                          5) # edge_blur_size
+                        300, # min_area
+                        34400, #max_area 
+                        4., # max_variation 
+                        .03, # min_diversity 
+                        10000, # max_evolution 
+                        1.04, # area_threshold 
+                        0.003, # min_margin
+                        5) # edge_blur_size
 
     # (1, 100, 20000, .25, 1., 1000, 1.001, 0.003, 5)
     regions, bboxes = mser.detectRegions(image)
