@@ -61,9 +61,11 @@ import netCDF4
 from geopandas import GeoSeries
 from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import KMeans
+from sklearn import metrics
+from sklearn.metrics import confusion_matrix, accuracy_score
 import seaborn as sns
 from scipy.signal import find_peaks
-from sklearn.metrics import confusion_matrix, accuracy_score
+from sklearn.metrics.pairwise import euclidean_distances
 
 DIR_DATA = '/content/drive/MyDrive/StageUParis/DATA/H2O/'
 DIR_TRAIN = '/content/drive/MyDrive/StageUParis/DATA/LABELS/'
@@ -80,7 +82,7 @@ class SplitImageLevels():
   degree = 0.625
   pixel_size = 0.3125
   vmax = 35
-  vmin = 0
+  vmin = 10
 
   weight_gray_values = 1
   N_CLUSTERS = 2
@@ -523,9 +525,9 @@ class SplitImageLevels():
 
     max_color_value = self.vmax
     
-    colors = sns.color_palette("YlOrBr", max_color_value + 1)
+    colors = sns.color_palette("YlOrBr", self.vmax + 1)
     cmap = matplotlib.colors.ListedColormap(colors)
-    norm = matplotlib.colors.BoundaryNorm(np.arange(max_color_value + 1) - 0.5, cmap.N)
+    norm = matplotlib.colors.BoundaryNorm(np.arange(self.vmin, self.vmax + 1) - 0.5, cmap.N)
 
     for i,val in enumerate(values):
       ax.scatter(rgsX2[i], rgsY2[i], marker='.', color=cmap(norm(int(val))) )
@@ -536,7 +538,10 @@ class SplitImageLevels():
     sm = matplotlib.cm.ScalarMappable(cmap=cmap, norm=norm)
     cbar_ax = fig.add_axes([0.09, 0.06, 0.84, 0.02])
     cb = fig.colorbar(sm,cax=cbar_ax,orientation='horizontal')
-    #cb.set_ticklabels(np.arange(0,self.vmax,self.vmin))
+    if self.image_type == "UT":
+      cb.set_ticklabels(np.arange(self.vmin,self.vmax + 1,int(self.vmax / 10 )))
+    else:
+      cb.set_ticklabels(np.arange(self.vmin,self.vmax + 1, int(self.vmax / 9) )) # 9 is the number of values plotted in the colorbar i.e [10--13--16--...--35]
 
     cb.set_label('DU')
 
@@ -642,7 +647,7 @@ class SplitImageLevels():
     print("Total connected components", num)
     return labels, num
 
-  def reconstruct_region_props(self, image_masked, labels_cc, min_width=2, min_height=3):
+  def reconstruct_region_props(self, image_masked, labels_cc, min_width=10, min_height=10):
     # return centroids
     rescale=1.0
     centroids = list()
@@ -657,13 +662,13 @@ class SplitImageLevels():
       y_min = region.bbox[0]
       y_max = region.bbox[2]
       # TODO: CORREGIR EL PROBLEMA CON LAS CLUSTERS Y LAS REGIONES QUE SE PIERDEN
-      # if (x_max - x_min) > min_width and y_max - y_min > min_height:
-      boxes_partition.append(np.array([x_min,y_min,x_max,y_max]))
-      cx, cy = map(lambda p: int(p*rescale), (region.centroid[0], region.centroid[1]))
-      centroids.append((cx, cy))
-      areas_partition.append(region.area)
-      grays_values.append(self.get_region_value(image_masked,np.array([x_min,y_min,x_max,y_max]),True)) # Gray values for the regions partitions
-      ids_valid_regions.append(i) # List to compare with CC. The idea is to rebuild the region as image, to do that we need the region id
+      if (x_max - x_min) > min_width and y_max - y_min > min_height:
+        boxes_partition.append(np.array([x_min,y_min,x_max,y_max]))
+        cx, cy = map(lambda p: int(p*rescale), (region.centroid[0], region.centroid[1]))
+        centroids.append((cx, cy))
+        areas_partition.append(region.area)
+        grays_values.append(self.get_region_value(image_masked,np.array([x_min,y_min,x_max,y_max]),True)) # Gray values for the regions partitions
+        ids_valid_regions.append(i) # List to compare with CC. The idea is to rebuild the region as image, to do that we need the region id
 
     print("Regions reconstructed",len(centroids))
 
@@ -955,25 +960,28 @@ class SplitImageLevels():
       print("Error deleting the file -> ", self.image_name)
 
 imageLT = SplitImageLevels()
+
 imageLT.set_year(2008)
-imageLT.set_month(5)
-imageLT.set_day(6)
+imageLT.set_month(12)
+imageLT.set_day(7)
 imageLT.set_image_type("LT")
+imageLT.set_vmin(10)
+imageLT.set_vmax(35)
 imageLT.set_image_name("levels")
 imageLT.set_weight_gray_values(1)
 imageLT.set_cluster_value(30)
 imageLT.set_pixel_size(0.25,.125)
-imageLT.set_vmin(10)
-imageLT.set_vmax(35)
 imageLT.get_image_by_leves()
 image_bgr , image_gray = imageLT.load_image_from_files(imageLT.get_image_name())
 image, foreground, background = imageLT.filter_image(image_gray)
 image,image_rbg,image_masked = imageLT.filter_image_for_mser(image,foreground)
 regions_mser, boxes_mser = imageLT.get_mser_regions(image_rbg)
 imageLT.plot_original_image()
+regx, regy, regs, polys, lines, values = imageLT.set_mser_regions(image_masked, regions_mser)
 
-#regx, regy, regs, polys, lines, values = imageLT.set_mser_regions(image_masked, regions_mser)
-#imageLT.plot_mser_final_regions(image_masked, regx, regy, values)
+imageLT.plot_mser_final_regions(image_masked, regx, regy, values)
+
+
 
 image_projected, image_projected_mask = imageLT.create_label_map(image, regions_mser)
 imageLT.plot_projected_image(image_projected,regions_mser,boxes_mser)
@@ -993,35 +1001,6 @@ cluster_labels, cluster_centers, model = imageLT.classify_regions(X,weights,N_CL
 plt.plot(grays_values)
 imageLT.plot_weights(weights)
 
-def sigmoid(X):
-  return 1/(1+np.exp(np.array(X)))
-
-def exponential(X):
-  return np.exp(X)
-
-def relu(X):
-  return np.maximum(0,X)
-
-def softmax(X):
-  expo = np.exp(X)
-  expo_sum = np.sum(np.exp(X))
-  return expo/expo_sum
-
-gg = list()
-
-g_v = grays_values.copy()
-#g_f = cv2.normalize(np.array(g_v), None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_64F)
-
-#for g in g_f:
-#  gg.append(relu(g))
-
-act_fun = sigmoid(g_v)
-
-#for g in grays_values:
-#  gg.append( 2 * np.exp(g))
-
-plt.plot(act_fun)
-
 imageLT.plot_test_best_cluster_number(X,weights,40,N_CLUSTERS)
 
 #imageLT.plot_clustered_regions_3d(X,5,cluster_labels,cluster_centers)
@@ -1036,10 +1015,6 @@ imageLT.plot_clustered_regions_2d(X,WEIGHT,cluster_labels,cluster_centers)
 #plt.plot(np.arange(0,1,.1))
 
 #plt.plot( x, y )
-
-from sklearn.metrics.pairwise import euclidean_distances
-
-from scipy.spatial import distance
 
 for i in range(len(cluster_centers) - 1):
   distances = list()
@@ -1076,8 +1051,6 @@ ax.set_ylabel("Centre de gravité Y")
 ax.invert_yaxis()
 fig.legend()
 fig.show()
-
-
 
 _, index_highest = imageLT.get_highest_cluster(cluster_centers)
 image_cluster = imageLT.get_image_cluster(labels_cc,cluster_labels)
@@ -1130,15 +1103,15 @@ plt.pause(.001)
 fig.show()
 plt.show()
 
-from yellowbrick.cluster import InterclusterDistance
+#from yellowbrick.cluster import InterclusterDistance
 
 # Generate synthetic dataset with 12 random clusters
 #X, y = make_blobs(n_samples=1000, n_features=12, centers=12, random_state=42)
 
 # Instantiate the clustering model and visualizer
 #model = KMeans(6)
-visualizer = InterclusterDistance(model)
-visualizer.fit(X)        # Fit the data to the visualizer
+#visualizer = InterclusterDistance(model)
+#visualizer.fit(X)        # Fit the data to the visualizer
 #visualizer.show()        # Finalize and render the figure
 
 directories = os.listdir( imageLT.get_DIR_TRAIN() )
@@ -1292,14 +1265,14 @@ for file in directories:
 
 sensitivity_c = list()
 for i,tp in enumerate(all_true_positives_c):
-  sensitivity_c.append(tp / (tp + all_false_negatives_c[i]))
+  sensitivity_c.append(tp / (tp + all_false_negatives_c[i]) * 100) 
 
 fig, ax = plt.subplots(1,1)
 ax.plot( np.arange(len(all_true_positives_c)), all_true_positives_c, label="True Positives")
 ax.plot( np.arange(len(all_false_positives_c)), all_false_positives_c, label="False Positives")
 ax.plot( np.arange(len(all_false_negatives_c)), all_false_negatives_c, label="False Negatives")
 ax.plot( np.arange(len(all_accuracy_c)), all_accuracy_c, "--", label="Accuracy")
-#ax.plot( np.arange(len(sensitivity_c)), sensitivity_c, "--", label="Sensitivity")
+ax.plot( np.arange(len(sensitivity_c)), sensitivity_c, "--", label="Sensitivity")
 
 ax.set_title('Confusion Matrix variation - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
 ax.set_xlabel("Cluster index")
@@ -1322,178 +1295,6 @@ ax.set_ylim(*yy_r)
 #ax.plot( all_false_positives_c, all_false_negatives_c, label="False Negatives")
 #ax.legend()
 fig.show()
-
-fig, (axx, axx2) = plt.subplots(1,2)
-
-black_image_best = np.zeros(best_regions_c[0].shape, np.uint8)
-black_image_worst = np.zeros(worst_regions_c[0].shape, np.uint8)
-
-for reg in best_regions_c[:]:
-  tmp = ma.masked_values(reg, 0.)
-  for i,x in enumerate(tmp[:]):
-    for j,y in enumerate(x):
-      if isinstance(y, np.uint8):
-        black_image_best[i][j] = 1
-
-for reg in worst_regions_c[:]:
-  tmp = ma.masked_values(reg, 0.)
-  for i,x in enumerate(tmp[:]):
-    for j,y in enumerate(x):
-      if isinstance(y, np.uint8):
-        black_image_worst[i][j] = 1
-
-
-axx.imshow(black_image_best, cmap="gray")
-axx.set_title('Best regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
-axx2.imshow(black_image_worst, cmap="gray")
-axx2.set_title('Worst regions - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year) )
-
-## COMPARING TRUE POSITIVES WITH GRAY VALUES AND POSITION IN SPACE
-
-all_t_p_c = all_true_positives_c.copy()
-all_f_p_c = all_false_positives_c.copy()
-all_t_n_c = all_true_negatives_c.copy()
-all_f_n_c = all_false_negatives_c.copy()
-
-rx_test = regx.copy()
-ry_test = regy.copy()
-val_test = values.copy()
-
-gray_levels_true_positive_c = list() # List of the best gray levels based on the true positives
-for i,tp in enumerate(all_t_p_c):
-  #if tp > 0:
-  gray_levels_true_positive_c.append(val_test[i])
-
-
-plt.boxplot([gray_levels_true_positive_c])
-plt.title('Dobson units related with the regions found - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
-plt.xlabel("True Positives")
-plt.ylabel('DU')
-ticks = range(1,2)
-labels_plot = list(["TP"])
-plt.xticks(ticks,labels_plot)
-plt.show()
-
-## THIS IS FOR COMPARE MSER REGIONS WITH THE GROUND TRUTH
-
-im_bin = img_gray.copy()
-mser_regions = regions.copy()
-from sklearn.metrics import accuracy_score 
-
-true_list_new = list()
-pred_list_new = list()
-
-all_true_positives = list()
-all_true_negatives = list()
-all_false_positives = list()
-all_false_negatives = list()
-
-all_accuracy = list()
-
-for ii,region in enumerate(mser_regions[:10]):
-  try:
-    img_mser = np.zeros(img_gray.shape, np.uint8)
-    for k in region:
-      cv2.circle(img_mser, (k[0],k[1]), radius=0, color=255, thickness=-1)
-    im_orig = img_mser.copy()
-    im_orig = cv2.normalize(im_orig, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-    im_bin = cv2.normalize(im_bin, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-    c_m_temp = confusion_matrix(im_bin.flatten(), im_orig.flatten())
-    true_positives = c_m_temp[1][1]
-    false_positives = c_m_temp[0][1]
-    false_negatives = c_m_temp[1][0]
-    true_negatives = c_m_temp[0][0]
-    accuracy = accuracy_score(im_bin.flatten(),im_orig.flatten()) * 100
-    total_pixels_blancs_test = len(im_orig[im_orig == 1])
-    all_true_positives.append(int(true_positives * 100 / total_pixels_blancs_test))
-    all_false_positives.append(int(false_positives * 100 / total_pixels_blancs_test))
-    all_accuracy.append(accuracy)
-    if int(true_positives * 100 / total_pixels_blancs_test) >= 30:
-      best_regions.append(im_orig)
-    else:
-      worst_regions.append(im_orig)
-  except:
-    print("There was an error at region", ii)
-  
-
-fig, ax = plt.subplots(1,1)
-#ax.plot( np.arange(len(all_true_positives)), all_true_positives, label="True Positives")
-ax.plot( np.arange(len(all_false_positives)), all_false_positives, label="False Positives")
-ax.plot( np.arange(len(all_accuracy)), all_accuracy, "--", label="Accuracy")
-ax.legend()
-
-
-  #true_list_new.append(im_bin)
-  #pred_list_new.append(im_orig)
-
-#true_list_new=np.array(true_list_new)
-#pred_list_new=np.array(pred_list_new)
-
-#true_list_new=true_list_new.flatten()
-#pred_list_new=pred_list_new.flatten()
-
-#c_m_mser = confusion_matrix(true_list_new, pred_list_new)
-#a_s_mser = accuracy_score(true_list_new,pred_list_new) * 100
-
-#print("Confusion Matrix: ", c_m_mser) 
-#print("Accuracy : ", a_s_mser)
-
-len(all_true_positives)
-
-## COMPARING TRUE POSITIVES WITH GRAY VALUES AND POSITION IN SPACE
-
-all_t_p = all_true_positives.copy()
-all_f_p = all_false_positives.copy()
-
-rx_test = regx.copy()
-ry_test = regy.copy()
-val_test = values.copy()
-my_polys = polys.copy()
-
-fig, ax = plt.subplots(1,1)
-#fig1, ax1 = plt.subplots(1,1)
-x_range = [0, image.shape[1]]
-y_range = [0, image.shape[0]]
-
-## FIG in 3D
-
-#f3d = plt.figure(figsize=(14, 9))
-#ax2 = plt.axes(projection ='3d')
-
-
-# ax.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
-
-gray_levels_true_positive = list() # List of the best gray levels based on the true positives
-how_many_true_positive_regions = 0
-for i,tp in enumerate(all_t_p):  
-  if tp > 0:
-    gray_levels_true_positive.append(val_test[i])
-    how_many_true_positive_regions += 1
-  ax.scatter(rx_test[i], ry_test[i], marker='.',cmap="gray")
-  ax.set_xlim(*x_range)
-  ax.set_ylim(*y_range)
-  ax.set_title('TP MSER REGIONS - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
-  ax.invert_yaxis()
-    #ax.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
-
-print("how_many_true_positive_regions", how_many_true_positive_regions, "of", len(val_test))
-
-gray_leves_false_positive = list()
-
-for i,fp in enumerate(all_f_p):
-  #if fp < 100:
-  gray_leves_false_positive.append(val_test[i])
-
-plt.imshow(im_bin, cmap="gray")
-
-plt.boxplot([gray_levels_true_positive])
-plt.title('Dobson units related with the regions found - IASI ' + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
-plt.xlabel("True Positives")
-plt.ylabel('DU')
-ticks = range(1,2)
-labels = list(["TP"])
-plt.xticks(ticks,labels)
-plt.show()
 
 
 
