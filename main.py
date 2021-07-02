@@ -381,9 +381,6 @@ class PollutionTracker():
     image_masked = ma.masked_values(image, 0.)
     image_color = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
     image_color = cv2.bitwise_and(image_color,image_color, mask=foreground)
-
-    fig, ax = plt.subplots(1,1)
-    ax.imshow(image_color)
   
     return image, image_color, image_masked
   
@@ -889,8 +886,8 @@ class PollutionTracker():
     for i,lbl in enumerate(cluster_labels[:]):
       image_cluster = np.where(labels_cc == (i+1), lbl + 1, image_cluster)
 
-    fig,axx = plt.subplots(1,1)
-    axx.imshow(image_cluster, cmap="jet")
+    #fig,axx = plt.subplots(1,1)
+    #axx.imshow(image_cluster, cmap="jet")
 
     return image_cluster
 
@@ -985,9 +982,8 @@ class PollutionTracker():
     except ErrorType as e:
       print("Error deleting the file -> ", self.image_name)
 
-def get_clusters_days(year,month,day,image_type,vmax):
+def get_clusters_days(year,month,day,image_type,vmax,N_CLUSTERS=10):
   WEIGHT = 2
-  N_CLUSTERS = 10
 
   pollution = PollutionTracker()
   pollution.set_year(year)
@@ -1010,9 +1006,9 @@ def get_clusters_days(year,month,day,image_type,vmax):
   centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions = pollution.reconstruct_region_props(image_masked,labels_cc,10,10)
   X, weights = pollution.create_X(image_projected,centroids,grays_values,WEIGHT)
   cluster_labels, cluster_centers, model = pollution.classify_regions(X,weights,N_CLUSTERS)
-  #pollution.plot_test_best_cluster_number(X,weights,40,10)
   image_cluster = pollution.get_image_cluster(labels_cc,cluster_labels)
   #pollution.plot_original_image()
+  #pollution.plot_test_best_cluster_number(X,weights,40,10)
   #regx, regy, regs, polys, lines, values = pollution.set_mser_regions(image_masked, regions_mser)
   #pollution.plot_mser_final_regions(image_masked, regx, regy, values)
   #pollution.plot_projected_image(image_projected,regions_mser,boxes_mser)
@@ -1020,7 +1016,7 @@ def get_clusters_days(year,month,day,image_type,vmax):
   #pollution.plot_clustered_regions_2d(X,WEIGHT, cluster_labels, cluster_centers)
   #pollution.plot_clustered_regions_3d(X,WEIGHT,cluster_labels,cluster_centers)
 
-  return X,cluster_labels,cluster_centers,weights,image_cluster,grays_values,centroids
+  return X,cluster_labels,cluster_centers,weights,image_cluster,grays_values,centroids,foreground,image_masked
 
 all_input_lt = list()
 all_input_ut = list()
@@ -1037,25 +1033,47 @@ all_weights_ut = list()
 all_images_cluster_lt = list()
 all_images_cluster_ut = list()
 
-all_grays_vals = list()
-all_centroids_vals = list()
+all_grays_vals_lt = list()
+all_grays_vals_ut = list()
 
-for i in range(1,8):
-  print(i)
-  X_lt, labels_lt, centers_lt , weights_lt, image_cluster_lt, gray_val, centroid_val = get_clusters_days(2008,5,i,"LT",35)
-  #X_ut, labels_ut, centers_ut , weights_ut, image_cluster_ut = get_clusters_days(2008,5,i,"UT",45)
-  all_input_lt.append(X_lt)
-  #all_input_ut.append(X_ut)
-  all_labels_lt.append(labels_lt)
-  #all_labels_ut.append(labels_ut)
-  all_centers_lt.append(centers_lt)
-  #all_centers_ut.append(centers_ut)
-  all_weights_lt.append(weights_lt)
-  #all_weights_ut.append(weights_ut)
-  all_images_cluster_lt.append(image_cluster_lt)
-  #all_images_cluster_ut.append(image_cluster_ut)
-  all_grays_vals.append(gray_val)
-  all_centroids_vals.append(centroid_val)
+all_centroids_vals_lt = list()
+all_centroids_vals_ut = list()
+
+all_foreground_lt = list()
+all_foreground_ut = list()
+
+all_masks_lt = list()
+all_masks_ut = list()
+
+for i in range(1,30):
+
+  if i == 6:
+
+    print(str(i) + "---------------------------------------------------------------------------")
+    
+    #if i == 10 or i == 11 or i == 12:
+    #  continue
+
+    X_lt, labels_lt, centers_lt , weights_lt, image_cluster_lt, gray_val_lt, centroid_val_lt, foreground_lt, mask_lt = get_clusters_days(2008,5,i,"LT",35,10)
+    X_ut, labels_ut, centers_ut , weights_ut, image_cluster_ut, gray_val_ut, centroid_val_ut, foreground_ut, mask_ut = get_clusters_days(2008,5,i,"UT",45,5)
+    all_input_lt.append(X_lt)
+    all_input_ut.append(X_ut)
+    all_labels_lt.append(labels_lt)
+    all_labels_ut.append(labels_ut)
+    all_centers_lt.append(centers_lt)
+    all_centers_ut.append(centers_ut)
+    all_weights_lt.append(weights_lt)
+    all_weights_ut.append(weights_ut)
+    all_images_cluster_lt.append(image_cluster_lt)
+    all_images_cluster_ut.append(image_cluster_ut)
+    all_grays_vals_lt.append(gray_val_lt)
+    all_grays_vals_ut.append(gray_val_ut)
+    all_centroids_vals_lt.append(centroid_val_lt)
+    all_centroids_vals_ut.append(centroid_val_ut)
+    all_foreground_lt.append(foreground_lt)
+    all_foreground_ut.append(foreground_ut)
+    all_masks_lt.append(mask_lt)
+    all_masks_ut.append(mask_ut)
 
 test_c_ut = all_centers_ut.copy()
 
@@ -1074,7 +1092,7 @@ for i in range(len(test_c_ut)):
   for c in test_c_ut[i][:,2]:
     export_centers_ut_z.append(c)
 
-np.savetxt('export_centers_ut.csv', [p for p in zip(export_centers_ut_x, export_centers_ut_y,export_centers_ut_z,export_day_c)], delimiter=',', fmt='%s')
+np.savetxt('export_centers_ut_dec2008.csv', [p for p in zip(export_centers_ut_x, export_centers_ut_y,export_centers_ut_z,export_day_c)], delimiter=',', fmt='%s')
 
 test_c_lt = all_centers_lt.copy()
 
@@ -1093,7 +1111,7 @@ for i in range(len(test_c_lt)):
   for c in test_c_lt[i][:,2]:
     export_centers_lt_z.append(c)
 
-np.savetxt('export_centers_lt.csv', [p for p in zip(export_centers_lt_x, export_centers_lt_y,export_centers_lt_z,export_day_c)], delimiter=',', fmt='%s')
+np.savetxt('export_centers_lt_dec2008.csv', [p for p in zip(export_centers_lt_x, export_centers_lt_y,export_centers_lt_z,export_day_c)], delimiter=',', fmt='%s')
 
 test_i_ut = all_input_ut.copy()
 test_l_ut = all_labels_ut.copy()
@@ -1105,6 +1123,8 @@ export_input_ut_z = ['Z_m']
 export_label_ut = ['label']
 export_weight_ut = ['w']
 export_day_ut = ['day']
+export_du_ut = ['DU']
+export_center_ut = ['centroid']
 
 for i in range(len(test_i_ut)):
   
@@ -1125,7 +1145,21 @@ for i in range(len(test_i_ut)):
   for w in test_w_ut[i]:
     export_weight_ut.append(w)
 
-np.savetxt('export_ut.csv', [p for p in zip(export_input_ut_x, export_input_ut_y,export_input_ut_z,export_label_ut,export_weight_ut,export_day_ut)], delimiter=',', fmt='%s')
+  for du in all_grays_vals_ut[i]:
+    export_du_ut.append(w)
+
+  for c in all_centroids_vals_ut[i]:
+    export_center_ut.append(c)
+    
+np.savetxt('export_ut_december2008.csv', [p for p in zip(export_input_ut_x, 
+                                            export_input_ut_y,
+                                            export_input_ut_z,
+                                            export_label_ut,
+                                            export_weight_ut,
+                                            export_day_ut,
+                                            export_du_ut,
+                                            export_center_ut
+                                            )], delimiter=',', fmt='%s')
 
 test_i_lt = all_input_lt.copy()
 test_l_lt = all_labels_lt.copy()
@@ -1137,6 +1171,8 @@ export_input_lt_z = ['Z_m']
 export_label_lt = ['label']
 export_weight_lt = ['w']
 export_day_lt = ['day']
+export_du_lt = ['DU']
+export_center_lt = ['centroid']
 
 for i in range(len(test_i_lt)):
   
@@ -1157,9 +1193,20 @@ for i in range(len(test_i_lt)):
   for w in test_w_lt[i]:
     export_weight_lt.append(w)
 
-np.savetxt('export_lt.csv', [p for p in zip(export_input_lt_x, export_input_lt_y,export_input_lt_z,export_label_lt,export_weight_lt,export_day_lt)], delimiter=',', fmt='%s')
+  for du in all_grays_vals_lt[i]:
+    export_du_lt.append(w)
 
-print("hi")
+  for c in all_centroids_vals_lt[i]:
+    export_center_lt.append(c)
+
+np.savetxt('export_lt_december2008.csv', [p for p in zip(export_input_lt_x, 
+                                            export_input_lt_y,
+                                            export_input_lt_z,
+                                            export_label_lt,
+                                            export_weight_lt,
+                                            export_day_lt,
+                                            export_du_lt,
+                                            export_center_lt)], delimiter=',', fmt='%s')
 
 
 
@@ -1179,15 +1226,15 @@ print("hi")
 #visualizer.show()        # Finalize and render the figure
 
 WEIGHT = 2
-N_CLUSTERS = 10
+N_CLUSTERS = 5
 
 pollution1 = PollutionTracker()
 pollution1.set_year(2008)
 pollution1.set_month(5)
-pollution1.set_day(6)
-pollution1.set_image_type("UT")
+pollution1.set_day(7)
+pollution1.set_image_type("LT")
 pollution1.set_vmin(10)
-pollution1.set_vmax(45)
+pollution1.set_vmax(35)
 pollution1.set_image_name("levels")
 pollution1.set_weight_gray_values(1)
 pollution1.set_cluster_value(30)
@@ -1202,9 +1249,9 @@ labels_cc, num_cc = pollution1.reconstruct_connected_component(image_projected_m
 centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions = pollution1.reconstruct_region_props(image_masked,labels_cc,10,10)
 X, weights = pollution1.create_X(image_projected,centroids,grays_values,WEIGHT)
 cluster_labels, cluster_centers, model = pollution1.classify_regions(X,weights,N_CLUSTERS)
-#pollution.plot_test_best_cluster_number(X,weights,40,10)
+pollution1.plot_test_best_cluster_number(X,weights,40,N_CLUSTERS)
 image_cluster = pollution1.get_image_cluster(labels_cc,cluster_labels)
-pollution1.plot_projected_image(image_projected,regions_mser,boxes_mser)
+#pollution1.plot_projected_image(image_projected,regions_mser,boxes_mser)
 pollution1.plot_clustered_regions_3d(X, WEIGHT, cluster_labels, cluster_centers)
 
 print(len(centroids), len(cluster_labels))
@@ -1216,10 +1263,6 @@ for i in range(1,len(cluster_centers) + 1):
   im_orig = np.where(image_cluster == i,1, im_orig)
   ax.imshow(im_orig)
   ax.set_title("i:" + str(i))
-
-plt.imshow(image)
-
-pollution1.vmax
 
 """
 hola
@@ -1241,14 +1284,14 @@ for i in reg:
 line.append(((image.shape[0] - i) / (image.shape[0] / 28)) + 20)
 rgsY2.append(line)
 """
-def get_region_value2(image, polygon):
+def get_region_value2(image, polygon, foreground, vmin=10, vmax=45):
     """
     This function returns the mean pixel value from a given polygon
     """
     #image = cv2.normalize(image, np.ones((image.shape[0], image.shape[0])) , pollution1.vmin, pollution1.vmax, cv2.NORM_MINMAX )
     #image = cv2.bitwise_and(image,image, mask=foreground)
 
-    image = cv2.normalize(image, np.ones((image.shape[0], image.shape[0])) , pollution1.vmin, pollution1.vmax, cv2.NORM_MINMAX )
+    image = cv2.normalize(image, np.ones((image.shape[0], image.shape[0])) , vmin, vmax, cv2.NORM_MINMAX )
     image = cv2.bitwise_and(image,image, mask=foreground)
 
     #minx, miny, maxx, maxy = polygon
@@ -1286,14 +1329,8 @@ def get_region_value2(image, polygon):
     
     return value_pixel
 
-plt.scatter([508],[156])
-plt.imshow(image_masked)
-print(image_masked[156,508])
-
-
-
-image222 = cv2.normalize(image_masked, np.ones((image_masked.shape[0], image_masked.shape[0])) , pollution1.vmin, pollution1.vmax, cv2.NORM_MINMAX )
-image222 = cv2.bitwise_and(image222,image222, mask=foreground)
+image222 = cv2.normalize(image_masked, np.ones((image_masked.shape[0], image_masked.shape[0])) , 10, 35, cv2.NORM_MINMAX )
+image222 = cv2.bitwise_and(image222,image222, mask=image_foreground)
 
 plt.scatter([508],[156])
 plt.scatter([550],[50])
@@ -1301,50 +1338,7 @@ plt.imshow(image222)
 print(image222[156,508])
 print(image222[50,550])
 
-image222 = cv2.bitwise_and(image222,image222, mask=foreground)
-plt.imshow(image222)
-
-print(image222[156,508])
-print(image222[50,550])
-
-
-
-regg = 9
-seuil = 15
-
-im_orig = np.zeros(image_cluster.shape, np.uint8)
-im_orig = np.where(image_cluster == regg,1, im_orig)
-contours_orig, _ = cv2.findContours(im_orig, 1, 2)
-
-
-
-
-for i,cnt in enumerate(contours_orig):
-  box = cv2.boundingRect(cnt)
-  x,y,w,h = box
-  
-  if ( w*h ) > 10000:
-    g = get_region_value2(image_masked,box)
-    print(g)
-    #cv2.rectangle(im_orig,(x,y),(x+w,y+h),(255,255,255),2)
-    im_orig = np.where(image_cluster == regg,g, im_orig)
-
-im_orig = np.where(im_orig < seuil, 0, im_orig)
-plt.imshow(im_orig, cmap="gray")
-
-dani = 0
-for x in im_orig:
-  for y in x:
-    if y != 0:
-      if dani < 3:
-        print(y)
-        dani += 1
-
-len(cluster_centers)
-
-
-
-def get_image_from_seuil (seuil = 0):
+def get_image_from_seuil (image_cluster, image_masked, foreground, seuil = 0):
   im_acum = np.zeros(image_cluster.shape, np.uint8)
 
   for cl in range(1,11):
@@ -1357,7 +1351,7 @@ def get_image_from_seuil (seuil = 0):
       x,y,w,h = box
       
       if ( w*h ) > 1000:
-        g = get_region_value2(image_masked,box)
+        g = get_region_value2(image_masked,box,foreground)
         #print(g)
         im_acum = np.where(image_cluster == cl, g, im_acum)
         #cv2.rectangle(im_orig,(x,y),(x+w,y+h),(255,255,255),2)
@@ -1367,97 +1361,209 @@ def get_image_from_seuil (seuil = 0):
 
   return im_acum
 
-im_acum = np.zeros(image_cluster.shape, np.uint8)
+all_seuils_lt = list()
 
-for cl in range(1,11):
-  seuil = 27
-
-  im_orig = np.zeros(image_cluster.shape, np.uint8)
-  im_orig = np.where(image_cluster == cl,1, im_orig)
-  contours_orig, _ = cv2.findContours(im_orig, 1, 2)
-
-  for i,cnt in enumerate(contours_orig):
-    box = cv2.boundingRect(cnt)
-    x,y,w,h = box
-    
-    if ( w*h ) > 1000:
-      g = get_region_value2(image_masked,box)
-      #print(g)
-      im_acum = np.where(image_cluster == cl, g, im_acum)
-      #cv2.rectangle(im_orig,(x,y),(x+w,y+h),(255,255,255),2)
-      im_orig = np.where(image_cluster == cl,g, im_orig)
-
-  im_acum = np.where(im_acum < seuil, 0, im_acum)
-  #ll, nn = measure.label(im_acum, return_num=True, background=0.)
+for dd in range(len(all_images_cluster_lt)):
+  image_cluster = all_images_cluster_lt[dd]
+  image_foreground = all_foreground_lt[dd]
+  image_masked = all_masks_lt[dd]
+  im_acum = np.zeros(image_cluster.shape, np.uint8)
   
-  plt.imshow(im_acum, cmap="jet")
-  plt.title("Cluster " + str(cl) + " - Threshold: " + str(seuil) + " DU")
+  for s in range(10, 45):
+    seuil = s
+
+    for cl in range(1,8):
+      im_orig = np.zeros(image_cluster.shape, np.uint8)
+      im_orig = np.where(image_cluster == cl,1, im_orig)
+      contours_orig, _ = cv2.findContours(im_orig, 1, 2)
+
+      for i,cnt in enumerate(contours_orig):
+        box = cv2.boundingRect(cnt)
+        x,y,w,h = box
+        if ( w*h ) > 1000:
+          g = get_region_value2(image_masked,box,image_foreground)
+          im_acum = np.where(image_cluster == cl, g, im_acum)
+          #im_orig = np.where(image_cluster == cl,g, im_orig)
+      im_acum = np.where(im_acum < seuil, 0, im_acum)
+
+    color_pixels_test = len(im_acum[im_acum != 0])
+    if color_pixels_test == 0:
+      all_seuils_lt.append(seuil - 1)
+      break
+
+  #fig, ax = plt.subplots(1,1)
+  #ax.imshow(im_acum, cmap="jet")
+  #ax.set_title("Cluster " + str(cl) + " - Threshold: " + str(seuil) + " DU")
+
+all_seuils_lt
+
+seuils_test = all_seuils_lt.copy()
+
+export_seuils_lt = ['Threshold']
+
+for s in seuils_test:
+  export_seuils_lt.append(s)
+
+np.savetxt('export_seuils_lt_dec2008.csv', [p for p in zip(export_seuils_lt)], delimiter=',', fmt='%s')
+
+np.mean(all_seuils_lt)
 
 directories = os.listdir( DIR_TRAIN )
 
-# This would print all the files and directories
-for file in directories:
-  only_png_files = re.search(".jpg", file)
-  if only_png_files is not None:
-    only_same_day = re.search(str(2008)+"%02d"%5+"%02d"%6, file)
-    if only_same_day is not None:
-      only_image_type = re.search("UT", file)
-      if only_image_type is not None:
-        img = io.imread(DIR_TRAIN + file)
-        #img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
-        img_hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-        img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        #img_gray = ma.masked_values(img_gray, 255.)
-        img_gray = cv2.GaussianBlur(img_gray,(5,5),cv2.BORDER_DEFAULT)
+container_f_p = list()
+container_f_n = list()
 
-        all_true_positives_c = list()
-        all_false_positives_c = list()
-        all_false_negatives_c = list()
+for day in range(1,2):
+  foreground = all_foreground_ut[day - 1]
+  image_masked = all_masks_ut[day - 1]
+  image_cluster = all_images_cluster_ut[day - 1]
 
-        for t in range(45):
-          print("\n")
-          im_orig = get_image_from_seuil(t)
-          im_bin = img_gray.copy()
+  # This would print all the files and directories
+  for file in directories:
+    only_png_files = re.search(".jpg", file)
+    if only_png_files is not None:
+      only_same_day = re.search(str(2008)+"%02d"%5+"%02d"%day, file)
+      if only_same_day is not None:
+        only_image_type = re.search("UT", file)
+        if only_image_type is not None:
+          img = io.imread(DIR_TRAIN + file)
+          img_hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+          img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+          img_gray = cv2.GaussianBlur(img_gray,(5,5),cv2.BORDER_DEFAULT)
 
-          total_pixels_blancs_ref = len(im_bin[im_bin != 0])
-          total_pixels_blancs_test = len(im_orig[im_orig != 0])
+          all_true_positives_c = list()
+          all_false_positives_c = list()
+          all_false_negatives_c = list()
 
-          if total_pixels_blancs_test == 0:
-            break
+          for t in range(10,45,2):
+            im_orig = get_image_from_seuil(image_cluster, image_masked, foreground,t)
+            im_bin = img_gray.copy()
 
-          im_orig = np.where(im_orig != 0, 1, im_orig)
-          c_m_temp = confusion_matrix(im_bin.flatten(), im_orig.flatten())
-          true_positives = c_m_temp[1][1]
-          false_positives = c_m_temp[0][1]
-          false_negatives = c_m_temp[1][0]
-          true_negatives = c_m_temp[0][0]
+            total_pixels_blancs_ref = len(im_bin[im_bin != 0])
+            total_pixels_blancs_test = len(im_orig[im_orig != 0])
 
-          all_true_positives_c.append(true_positives * 100 / total_pixels_blancs_test)
-          all_false_positives_c.append(false_positives * 100 / total_pixels_blancs_test)
-          all_false_negatives_c.append(false_negatives * 100 / total_pixels_blancs_ref)
+            if total_pixels_blancs_test == 0:
+              break
 
-          error = np.sum(np.abs(im_orig - im_bin))
-          print(error)
+            im_orig = np.where(im_orig != 0, 1, im_orig)
+            c_m_temp = confusion_matrix(im_bin.flatten(), im_orig.flatten())
+            true_positives = c_m_temp[1][1]
+            false_positives = c_m_temp[0][1]
+            false_negatives = c_m_temp[1][0]
+            true_negatives = c_m_temp[0][0]
 
-          plt.figure()
-          plt.title("Ground Truth and Regions 6/5/2008 cluster at DU=" + str(t) )
-          plt.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
-          plt.show()
+            all_true_positives_c.append(true_positives * 100 / total_pixels_blancs_test)
+            all_false_positives_c.append(false_positives * 100 / total_pixels_blancs_test)
+            all_false_negatives_c.append(false_negatives * 100 / total_pixels_blancs_ref)
+
+            #plt.figure()
+            #plt.title("Ground Truth and Regions "+str(day)+"/5/2008 cluster at DU=" + str(t) )
+            #plt.imshow(np.dstack((np.int_(im_orig), im_bin, im_bin))*255)
+            #plt.show()
+          
+          container_f_p.append(all_false_positives_c)
+          container_f_n.append(all_false_negatives_c)
+
+fp_test_e = container_f_p.copy()
+fn_test_e = container_f_n.copy()
+
+export_fp_name = ['FP']
+export_fn_name = ['FN']
+
+for fps in fp_test_e:
+  for fp in fps:
+    export_fp_name.append(fp)
+
+for fns in fn_test_e:
+  for fn in fns:
+    export_fn_name.append(fn)
+
+np.savetxt('export_fp_fn.csv', [p for p in zip(export_fp_name, export_fn_name)], delimiter=',', fmt='%s')
+
+list_du_test = np.arange(10, 45, 2)
+moyenne_du_seuil = list()
+
+for fps in container_f_p[:]:
+  #print(fps)
+  moyenne_du_seuil.append(np.argmin(fps))
+  print(fps[np.argmin(fps)],np.argmin(fps),list_du_test[np.argmin(fps)])
+
+my_lt = np.mean(moyenne_du_seuil)
+print(my_lt)
+
+
+
+# 10 - 12 - 14 - 16 - 18 - 20 - 22 - 24 - 26 - 28 - 30 - 32 - 34
+# 0  - 1  - 2 -  3  - 4  - 5  - 6  - 7 -  8  - 9  - 10 - 11 - 12
 
 #t_p_plot = np.where(np.array(all_true_positives_c) > 0, all_true_positives_c, np.nan)
 
 fig, ax = plt.subplots(1,1)
 
-#ax.plot( np.arange(len(all_true_positives_c)), all_true_positives_c, label="True Positives")
-ax.plot( np.arange(len(all_false_positives_c)), all_false_positives_c, label="False Positives")
-ax.plot( np.arange(len(all_false_negatives_c)), all_false_negatives_c, label="False Negatives")
+##ax.plot( np.arange(len(all_true_positives_c)), all_true_positives_c, label="True Positives")
+#ax.plot( np.arange(len(all_false_positives_c)), all_false_positives_c, label="False Positives")
+#ax.plot( np.arange(len(all_false_negatives_c)), all_false_negatives_c, label="False Negatives")
+
+for fps in container_f_p[:]:
+  ax.plot( np.arange(len(fps)), fps, label="False Positives", c="b")
+
+for fns in container_f_n[:]:
+  ax.plot( np.arange(len(fns)), fns, label="False Negatives", c="r")
+
+
+juli = np.full((100,), int(my_lt))
+plt.plot(juli, np.arange(len(juli)), "--", label="Mean", c="g")
 
 ax.set_title('False Positive and False Negative - IASI UT 6/5/2008')# + imageLT.image_type + " - " + str(imageLT.day) +"/"+ str(imageLT.month) +"/"+ str(imageLT.year))
 ax.set_xlabel("DU units")
 ax.set_ylabel("FP and FN %")
 ax.set_ylim([0,100])
-ax.set_xlim([10,45])
-ax.legend()
+plt.xticks(np.arange(len(all_false_positives_c)), np.arange(10,45,2))
+#ax.set_xlim([0,35])
+#ax.legend()
+
+all_seuils_lt = list()
+
+for dd in range(len(all_images_cluster_ut)):
+  image_cluster = all_images_cluster_ut[dd]
+  image_foreground = all_foreground_ut[dd]
+  image_masked = all_masks_ut[dd]
+  im_acum = np.zeros(image_cluster.shape, np.uint8)
+  
+  seuil = 28
+
+  for cl in range(1,11):
+    im_orig = np.zeros(image_cluster.shape, np.uint8)
+    im_orig = np.where(image_cluster == cl,1, im_orig)
+    contours_orig, _ = cv2.findContours(im_orig, 1, 2)
+
+    for i,cnt in enumerate(contours_orig):
+      box = cv2.boundingRect(cnt)
+      x,y,w,h = box
+      if ( w*h ) > 1000:
+        g = get_region_value2(image_masked,box,image_foreground)
+        im_acum = np.where(image_cluster == cl, g, im_acum)
+        #im_orig = np.where(image_cluster == cl,g, im_orig)
+    im_acum = np.where(im_acum < seuil, 0, im_acum)
+
+
+  fig, ax = plt.subplots(1,1)
+  ax.imshow(im_acum, cmap="jet")
+  ax.set_title("Cluster IASI - UT 6/5/2008") # + str(dd + 1) + "/5/2008")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 f , axx = plt.subplots(1,1)
 axx.plot(all_false_positives_c, all_false_negatives_c)
