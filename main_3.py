@@ -691,7 +691,7 @@ class PollutionTracker():
     print("Total connected components", num)
     return labels, num
 
-  def reconstruct_region_props(self, image_projected_mask, labels_cc):
+  def reconstruct_region_props(self, image_projected_mask, labels_cc, min_size=30):
     props = measure.regionprops(labels_cc)
     centroids = list()
     areas_partition = list()
@@ -706,7 +706,7 @@ class PollutionTracker():
 
     for i, prop in enumerate(props):
       area = prop.area
-      if area >= 30:
+      if area >= min_size:
         x_min = prop.bbox[0]
         y_min = prop.bbox[1]
         x_max = prop.bbox[2]
@@ -759,6 +759,12 @@ class PollutionTracker():
 
     ids_show = list()
 
+    highest_list_data = list() # stores a small list with the highest values -> this because i want to hierarchise the colors (red=high pollution) (yellow=mean pollution)
+
+    for gray in grays_values:
+      if gray > threshold:
+        highest_list_data.append(gray)
+
     for i in range(len(centroids)):
         color = (random.randint(0,256), random.randint(0,256), random.randint(0,256))
         text = None
@@ -777,13 +783,22 @@ class PollutionTracker():
         # DU: str(int(imageLT.get_region_value(t_i,boxes_partition[i],True)))
 
         if grays_values[i] >= threshold:
+
+          mean_highest = np.mean(highest_list_data)
+
+          if (grays_values[i] > mean_highest):
+            bx_color = (255,0,0)
+            tx_color = [255,0,0]
+          else:
+            bx_color = (255,255,0)
+            tx_color = [255,255,0]
+          
           x, y, w, h = boxes_partition[i]
           ids_show.append(i)
-          cv2.putText(image_projected, text, (int(centroids[i][1]), int(centroids[i][0])), font, .3, [255,0,0], thickness, cv2.LINE_AA) # , color, thickness, cv2.LINE_AA)
+          cv2.putText(image_projected, text, (int(centroids[i][1]), int(centroids[i][0])), font, .3, tx_color, thickness, cv2.LINE_AA) # , color, thickness, cv2.LINE_AA)
           cv2.circle(image_projected, (int(centroids[i][1]), int(centroids[i][0])), 1, color, -1)
-          cv2.rectangle(image_projected, (y,x), (h,w), (0, 0, 255), 1)
-    
-    print("id", ids_show)
+          cv2.rectangle(image_projected, (y,x), (h,w), bx_color, 1)
+
     ax.imshow(image_projected)
     ax.set_title(text_to_plot + self.get_image_datename())
     fig.show()
@@ -1090,19 +1105,6 @@ labels_cc, num_cc = pollution3.reconstruct_connected_component(image_projected_m
 centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions, coords_regions = pollution3.reconstruct_region_props(image_projected_mask, labels_cc)
 pollution3.plot_regions_reconstructed(image_projected, centroids, areas_partition, grays_values,boxes_partition,ids_valid_regions,'id')
 
-image_projected_bgr, image_projected = pollution3.load_image_from_files("proj-" + pollution3.get_image_name())
-image_projected = np.where(image_projected == 255, 0, image_projected)
-image_projected = cv2.morphologyEx(image_projected, cv2.MORPH_OPEN, np.ones((3,3),np.uint8), iterations = 1)
-image_projected = cv2.normalize(image_projected, np.ones((image_projected.shape[0], image_projected.shape[0])), 0, pollution3.vmax, cv2.NORM_MINMAX )
-image_projected_mask = ma.masked_values(image_projected, 0.)
-
-f0, (ax0) = plt.subplots(1,1,figsize=(11,8))
-#ax0.set_title(pollution3.get_image_datename())
-ax0.imshow(image_projected_mask,cmap="jet")
-ax0.axis('off')
-f0.savefig("result-" + str(pollution3.get_vmin()) + "-" + str(pollution3.get_vmax()) + "-" + pollution3.image_name, bbox_inches='tight', pad_inches=0)
-plt.close(f0)
-
 
 
 def compare_two_images(img1, img2):
@@ -1135,28 +1137,6 @@ print(compare_two_images("color-15-25-LT-level-20080501.png","result-15-25-LT-le
 #print(compare_two_images("color-10-35-LT-level-20080826.png","color-15-25-LT-level-20080826.png"))
 #print(compare_two_images("color-10-35-LT-level-20080826.png","color-3-50-LT-level-20080826.png"))
 #print(compare_two_images("color-15-25-LT-level-20080826.png","color-3-50-LT-level-20080826.png"))
-
-fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(10, 4),
-                         sharex=True, sharey=True)
-ax = axes.ravel()
-
-
-label = 'MSE: {:.2f}, SSIM: {:.2f}'
-
-ax[0].imshow(img, cmap=plt.cm.gray, vmin=0, vmax=1)
-ax[0].set_xlabel(label.format(mse_none, ssim_none))
-ax[0].set_title('Original image')
-
-ax[1].imshow(img_noise, cmap=plt.cm.gray, vmin=0, vmax=1)
-ax[1].set_xlabel(label.format(mse_noise, ssim_noise))
-ax[1].set_title('Image with noise')
-
-ax[2].imshow(img_const, cmap=plt.cm.gray, vmin=0, vmax=1)
-ax[2].set_xlabel(label.format(mse_const, ssim_const))
-ax[2].set_title('Image plus constant')
-
-plt.tight_layout()
-plt.show()
 
 
 
@@ -1267,8 +1247,6 @@ pollution3.plot_test_best_cluster_number(X,weights,40,N_CLUSTERS)
 
 pollution3.plot_clustered_regions_3d(X,WEIGHT,cluster_labels,cluster_centers)
 
-pollution3.plot_regions_reconstructed(image_projected, centroids, areas_partition, grays_values,boxes_partition,'id', 10)
-
 gradx, grady = np.gradient (pollution3.colgrid, edge_order=1)
 v_x, v_y = np.meshgrid(pollution.lon_g, pollution.lat_g)
 
@@ -1355,11 +1333,12 @@ def get_clusters_days(year,month,day,image_type,vmax,N_CLUSTERS=5):
   regions_mser, boxes_mser = pollution.get_mser_regions(image_rbg)
   regx, regy, regs, polys, lines, values = pollution.set_mser_regions(image_masked, regions_mser)
   pollution.create_label(image_masked,regx, regy, values)
+  image_projected,image_projected_mask = pollution.export_colored_region_image()
   
-  _, image_projected = pollution.load_image_from_files("proj-" + pollution.get_image_name())
-  image_projected = np.where(image_projected == 255, 0, image_projected)
-  image_projected = cv2.morphologyEx(image_projected, cv2.MORPH_OPEN, np.ones((3,3),np.uint8), iterations = 1)
-  image_projected_mask = ma.masked_values(image_projected, 0.)
+  #_, image_projected = pollution.load_image_from_files("proj-" + pollution.get_image_name())
+  #image_projected = np.where(image_projected == 255, 0, image_projected)
+  #image_projected = cv2.morphologyEx(image_projected, cv2.MORPH_OPEN, np.ones((3,3),np.uint8), iterations = 1)
+  #image_projected_mask = ma.masked_values(image_projected, 0.)
 
   #fig_, ax0 = plt.subplots(1,1, figsize=(11,8))
   #ax0.imshow(image_projected_mask,cmap="jet")
@@ -1423,29 +1402,29 @@ for i in range(1,8):
   #  continue
   
   X_lt, labels_lt, centers_lt , weights_lt, image_cluster_lt, gray_val_lt, centroid_val_lt, coords_regions_lt, areas_partition_lt, foreground_lt, mask_lt = get_clusters_days(2008,5,i,"LT",35,5)
-  #X_ut, labels_ut, centers_ut , weights_ut, image_cluster_ut, gray_val_ut, centroid_val_ut, coords_regions_ut, areas_partition_ut, foreground_ut, mask_ut = get_clusters_days(2008,5,i,"UT",45,5)
+  X_ut, labels_ut, centers_ut , weights_ut, image_cluster_ut, gray_val_ut, centroid_val_ut, coords_regions_ut, areas_partition_ut, foreground_ut, mask_ut = get_clusters_days(2008,5,i,"UT",45,5)
   all_input_lt.append(X_lt)
-  #all_input_ut.append(X_ut)
+  all_input_ut.append(X_ut)
   all_labels_lt.append(labels_lt)
-  #all_labels_ut.append(labels_ut)
+  all_labels_ut.append(labels_ut)
   all_centers_lt.append(centers_lt)
-  #all_centers_ut.append(centers_ut)
+  all_centers_ut.append(centers_ut)
   all_weights_lt.append(weights_lt)
-  #all_weights_ut.append(weights_ut)
+  all_weights_ut.append(weights_ut)
   all_images_cluster_lt.append(image_cluster_lt)
-  #all_images_cluster_ut.append(image_cluster_ut)
+  all_images_cluster_ut.append(image_cluster_ut)
   all_coords_vals_lt.append(coords_regions_lt)
-  #all_coords_vals_ut.append(coords_regions_ut)
+  all_coords_vals_ut.append(coords_regions_ut)
   all_grays_vals_lt.append(gray_val_lt)
-  #all_grays_vals_ut.append(gray_val_ut)
+  all_grays_vals_ut.append(gray_val_ut)
   all_areas_vals_lt.append(areas_partition_lt)
-  #all_areas_vals_ut.append(areas_partition_ut)
+  all_areas_vals_ut.append(areas_partition_ut)
   all_centroids_vals_lt.append(centroid_val_lt)
-  #all_centroids_vals_ut.append(centroid_val_ut)
+  all_centroids_vals_ut.append(centroid_val_ut)
   all_foreground_lt.append(foreground_lt)
-  #all_foreground_ut.append(foreground_ut)
+  all_foreground_ut.append(foreground_ut)
   all_masks_lt.append(mask_lt)
-  #all_masks_ut.append(mask_ut)
+  all_masks_ut.append(mask_ut)
 
 for i in range(len(all_images_cluster_lt)):
   f,ax = plt.subplots(1,1)
@@ -2420,10 +2399,12 @@ def compute_clusters_lt(pollution2, image_gray, WEIGHT,N_CLUSTERS ):
   regx, regy, regs, polys, lines, values = pollution2.set_mser_regions(image_masked, regions_mser)
   pollution2.create_label(image_masked,regx, regy, values)
 
-  _, image_projected = pollution2.load_image_from_files("proj-" + pollution2.get_image_name())
-  image_projected = np.where(image_projected == 255, 0, image_projected)
-  image_projected = cv2.morphologyEx(image_projected, cv2.MORPH_OPEN, np.ones((3,3),np.uint8), iterations = 1)
-  image_projected_mask = ma.masked_values(image_projected, 0.)
+  #_, image_projected = pollution2.load_image_from_files("proj-" + pollution2.get_image_name())
+  #image_projected = np.where(image_projected == 255, 0, image_projected)
+  #image_projected = cv2.morphologyEx(image_projected, cv2.MORPH_OPEN, np.ones((3,3),np.uint8), iterations = 1)
+  #image_projected_mask = ma.masked_values(image_projected, 0.)
+
+  image_projected,image_projected_mask = pollution2.export_colored_region_image()
 
   labels_cc, num_cc = pollution2.reconstruct_connected_component(image_projected_mask)
   centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions, coords_regions = pollution2.reconstruct_region_props(image_projected_mask, labels_cc)
@@ -2471,7 +2452,7 @@ def compare_with_lt(year,month,day_to_test, pollution_ut, du_best_value_ut, isIn
   #else:
   #  higher = du_best_value_lt_out
 
-  higher = 26. # np.mean([du_best_value_lt_in, du_best_value_lt_out])
+  higher = np.mean([du_best_value_lt_in, du_best_value_lt_out]) # 26.
 
   pollution_lt_in = get_ut_final_clusters([foreground_in],[image_masked_in],[image_cluster_in],int(higher),"LT",year,month,N_CLUSTERS)
   pollution_lt_out = get_ut_final_clusters([foreground_out],[image_masked_out],[image_cluster_out],int(higher),"LT",year,month,N_CLUSTERS)
@@ -2489,8 +2470,8 @@ for i in range(1,3):
 
 
 WEIGHT = 2
-N_CLUSTERS = 15
-day_to_test = 7
+N_CLUSTERS = 10
+day_to_test = 1
 
 pollution2 = PollutionTracker()
 pollution2.set_year(2008)
@@ -2517,20 +2498,26 @@ ax1.imshow(pollution_ut[day_to_test - 1], cmap="gray")
 ax2.imshow(image_gray, cmap="gray")
 
 image, foreground, background = pollution2.filter_image(image_gray)
+
 image,image_rbg,image_masked = pollution2.filter_image_for_mser(image,foreground)
 regions_mser, boxes_mser = pollution2.get_mser_regions(image_rbg)
 
 regx, regy, regs, polys, lines, values = pollution2.set_mser_regions(image_masked, regions_mser)
 pollution2.plot_mser_final_regions(image_masked, regx, regy, values)
 
-image_projected, image_projected_mask = pollution2.create_label_map(image, regions_mser)
+pollution2.create_label(image_masked,regx, regy, values)
+image_projected,image_projected_mask = pollution2.export_colored_region_image()
+
 labels_cc, num_cc = pollution2.reconstruct_connected_component(image_projected_mask)
-centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions = pollution2.reconstruct_region_props(image,labels_cc,10,10)
+centroids, grays_values, areas_partition, boxes_partition, ids_valid_regions, coords_regions = pollution2.reconstruct_region_props(image_projected_mask, labels_cc, 500)
+
+pollution2.plot_regions_reconstructed(image_projected, centroids, areas_partition, grays_values,boxes_partition,ids_valid_regions,'du',np.mean(grays_values))
+
 X, weights = pollution2.create_X(image_projected,centroids,grays_values,WEIGHT)
 cluster_labels, cluster_centers, model = pollution2.classify_regions(X,weights,N_CLUSTERS)
-image_cluster = pollution2.get_image_cluster(labels_cc,cluster_labels)
+image_cluster_bgr, image_cluster, image_cluster_mask = pollution2.get_image_cluster(image_projected,cluster_labels,coords_regions)
 
-lt_fp2, lt_fn2 = compare_with_ground_truth([foreground], [image_masked], [image_cluster], 2008, 5, "LT",False, int(du_best_value_ut))
+lt_fp2, lt_fn2 = compare_with_ground_truth([foreground], [image_masked], [image_cluster], [cluster_labels], 2008, 5, "LT",False, int(du_best_value_ut))
 
 du_thresh_lt2, du_best_value_lt2 = get_best_DU(lt_fp2,lt_fn2, "LT",int(du_best_value_ut))
 print(du_thresh_lt2, du_best_value_lt2)
