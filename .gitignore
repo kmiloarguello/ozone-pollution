@@ -13,3 +13,6 @@
 *.hdf
 *.xml
 *.he5
+/End
+/.vscode
+/Results
