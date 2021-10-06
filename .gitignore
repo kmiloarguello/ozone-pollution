@@ -10,3 +10,9 @@
 /__pycache__
 */__pycache__
 /Ref
+*.hdf
+*.xml
+*.he5
+/End
+/.vscode
+/Results
